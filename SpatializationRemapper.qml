@@ -34,9 +34,9 @@ ApplicationWindow {
     }
 
     function onInputValueReceived(address, value) {
-        // Update monitor
         messageMonitor.append(`IN: ${address} = ${JSON.stringify(value)}`)
-        if (messageMonitor.lineCount > 100) {
+        // Update monitor
+        if (messageMonitor.lineCount > 15) {
             messageMonitor.remove(0, messageMonitor.text.indexOf('\n') + 1)
         }
         
@@ -62,7 +62,6 @@ ApplicationWindow {
                     // Send each mapped message to output device
                     for (let msg of mapped) {
                         let full_address = `${output.name}:${msg.address}`
-                        console.log(full_address, " => ", msg.address, msg.value)
                         Device.write(full_address, msg.value)
                     }
                 }
@@ -161,26 +160,26 @@ ApplicationWindow {
                 const admElevation = elevation * 180.0 / Math.PI
                 
                 messages.push({
-                    address: `/adm/obj/${sourceIndex}/azimuth`,
+                    address: `/adm/obj/${sourceIndex}/azim`,
                     value: admAzimuth
                 })
                 messages.push({
-                    address: `/adm/obj/${sourceIndex}/elevation`,
+                    address: `/adm/obj/${sourceIndex}/elev`,
                     value: admElevation
                 })
                 messages.push({
-                    address: `/adm/obj/${sourceIndex}/distance`,
+                    address: `/adm/obj/${sourceIndex}/dist`,
                     value: radius
                 })
                 if (hspan !== undefined) {
                     messages.push({
-                        address: `/adm/obj/${sourceIndex}/width`,
+                        address: `/adm/obj/${sourceIndex}/w`,
                         value: hspan * 360  // Convert to degrees
                     })
                 }
                 if (vspan !== undefined) {
                     messages.push({
-                        address: `/adm/obj/${sourceIndex}/height`,
+                        address: `/adm/obj/${sourceIndex}/h`,
                         value: vspan * 180  // Convert to degrees
                     })
                 }
@@ -238,13 +237,13 @@ ApplicationWindow {
                 })
                 if (hspan !== undefined) {
                     messages.push({
-                        address: `/adm/obj/${sourceIndex}/width`,
+                        address: `/adm/obj/${sourceIndex}/w`,
                         value: hspan * 360  // Convert to degrees
                     })
                 }
                 if (vspan !== undefined) {
                     messages.push({
-                        address: `/adm/obj/${sourceIndex}/height`,
+                        address: `/adm/obj/${sourceIndex}/h`,
                         value: vspan * 180  // Convert to degrees
                     })
                 }
@@ -435,7 +434,7 @@ ApplicationWindow {
                 TextField {
                     id: inputPortField
                     Layout.preferredWidth: Math.min(80, window.width * 0.1)
-                    text: "4567"
+                    text: "18032"
                     color: "#ffffff"
                     font.pixelSize: Math.min(12, window.height * 0.02)
                     
@@ -495,6 +494,8 @@ ApplicationWindow {
                 anchors.fill: parent
                 spacing: 10
 
+
+                Item { width: 1; height: 30 }
                 // Add Output Form
                 RowLayout {
                     Layout.fillWidth: true
@@ -503,9 +504,9 @@ ApplicationWindow {
                     TextField {
                         id: outputNameField
                         Layout.preferredWidth: Math.max(100, Math.min(150, window.width * 0.15))
-                        placeholderText: "Device Name"
                         color: "#ffffff"
                         font.pixelSize: Math.min(12, window.height * 0.02)
+                        placeholderText: "Name"
                         
                         background: Rectangle {
                             color: "#3a3a3a"
@@ -604,6 +605,7 @@ ApplicationWindow {
                         Layout.preferredWidth: Math.max(50, Math.min(80, window.width * 0.08))
                         
                         onClicked: {
+                            console.log(outputNameField.text, outputHostField.text,outputPortField.text)
                             if (outputNameField.text && outputHostField.text && outputPortField.text) {
                                 createOutputDevice(
                                     outputNameField.text,
@@ -795,7 +797,7 @@ ApplicationWindow {
             Button {
                 Layout.preferredWidth: Math.max(80, Math.min(120, window.width * 0.12))
                 text: "SpatGRIS"
-                onClicked: createOutputDevice("SpatGRIS_1", "127.0.0.1", 18032, "SpatGRIS")
+                onClicked: createOutputDevice("SpatGRIS_1", "127.0.0.1", 18042, "SpatGRIS")
                 
                 background: Rectangle {
                     color: parent.hovered ? "#5a5a5a" : "#4a4a4a"
