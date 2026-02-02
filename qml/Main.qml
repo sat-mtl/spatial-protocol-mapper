@@ -1,6 +1,8 @@
+import QtCore
+import QtQuick.Controls.Universal
 import QtQuick 
 import QtQuick.Layouts 
-import QtQuick.Controls 2.15
+import QtQuick.Controls
 import Score.UI as UI
 
 ApplicationWindow {
@@ -10,7 +12,13 @@ ApplicationWindow {
     height: 600
     title: "OSC Spatialization Router"
     color: "#1e1e1e"
+    
+    Settings {
+        id: appSettings
+        category: "OSCRouter"
 
+        property int listenPort: 18032
+    }
     property var inputDevice: null
     property var outputDevices: []
     property var addressMappings: new Map()
@@ -19,8 +27,14 @@ ApplicationWindow {
 
     // Input configuration
     Component.onCompleted: {
-        // Create input device for receiving from ControlGRIS
-        createInputDevice()
+      // Create input device for receiving from ControlGRIS
+      createInputDevice();
+      
+      restoreSavedSettings();
+    }
+    
+    function restoreSavedSettings() {
+        inputPortField.text = appSettings.listenPort
     }
 
     function createInputDevice() {
@@ -435,7 +449,7 @@ ApplicationWindow {
                     id: inputPortField
                     Layout.preferredWidth: Math.min(80, window.width * 0.1)
                     text: "18032"
-                    color: "#ffffff"
+                    color: acceptableInput? "#fff" : "#f00"
                     font.pixelSize: Math.min(12, window.height * 0.02)
                     
                     background: Rectangle {
@@ -443,6 +457,7 @@ ApplicationWindow {
                         border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
                         radius: 2
                     }
+                    validator: IntValidator { bottom: 1; top: 65535; }
                 }
                 
                 Button {
@@ -506,7 +521,8 @@ ApplicationWindow {
                         Layout.preferredWidth: Math.max(100, Math.min(150, window.width * 0.15))
                         color: "#ffffff"
                         font.pixelSize: Math.min(12, window.height * 0.02)
-                        placeholderText: "Name"
+                        placeholderText: "(Name)"
+                        placeholderTextColor: "#888"
                         
                         background: Rectangle {
                             color: "#3a3a3a"
@@ -552,22 +568,23 @@ ApplicationWindow {
                         currentIndex: 0
                         
                         background: Rectangle {
+                            y: 3
                             color: "#3a3a3a"
                             border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
                             radius: 2
+                            height: outputPortField.height
                         }
                         
                         contentItem: Label {
-                            text: parent.displayText
+                            text:  parent.displayText
+                            height: 10
                             color: "#ffffff"
                             verticalAlignment: Text.AlignVCenter
                             leftPadding: 10
-                            font.pixelSize: Math.min(12, window.height * 0.02)
+                            font.pixelSize: 12
                         }
-                        
                         delegate: ItemDelegate {
                             width: parent.width
-                            height: 30
                             
                             background: Rectangle {
                                 color: parent.hovered ? "#4a4a4a" : "#3a3a3a"
@@ -580,12 +597,12 @@ ApplicationWindow {
                                 font.pixelSize: Math.min(12, window.height * 0.02)
                             }
                         }
-                        
+                        /*
                         indicator: Canvas {
                             x: parent.width - width - 10
                             y: parent.topPadding + (parent.availableHeight - height) / 2
                             width: 12
-                            height: 8
+                            height: 12
                             contextType: "2d"
                             
                             onPaint: {
@@ -597,7 +614,8 @@ ApplicationWindow {
                                 context.fillStyle = "#888888"
                                 context.fill()
                             }
-                        }
+                        }*/
+                        
                     }
                     
                     Button {
