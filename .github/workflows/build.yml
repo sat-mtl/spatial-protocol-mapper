@@ -34,7 +34,7 @@ jobs:
         id: score
         uses: ossia/actions/custom-score-build@master
         with:
-          cmake-options: -DSCORE_ENABLE_ADDONS=score-addon-spatgris -DSCORE_DISABLE_PLUGINS=score-plugin-faust,score-plugin-jit,score-plugin-vst,score-plugin-vst3,score-plugin-clap,score-plugin-lv2,score-plugin-avnd,score-plugin-pd,score-plugin-ysfx,score-plugin-packagemanager,score-plugin-controlsurface -DSCORE_QT_PLUGINS_NO_QTQUICK3D=1 -DSCORE_QT_PLUGINS_NO_IMAGEFORMATS=1
+          cmake-options: -DSCORE_ENABLE_ADDONS=score-addon-spatgris -DSCORE_DISABLE_PLUGINS=score-plugin-faust,score-plugin-jit,score-plugin-vst,score-plugin-vst3,score-plugin-clap,score-plugin-lv2,score-plugin-avnd,score-plugin-pd,score-plugin-ysfx,score-plugin-packagemanager,score-plugin-controlsurface,score-plugin-gfx,score-plugin-media,score-plugin-spline3d,score-plugin-recording,score-plugin-nodal,score-plugin-spline,score-plugin-mapping -DSCORE_QT_PLUGINS_NO_QTQUICK3D=1 -DSCORE_QT_PLUGINS_NO_IMAGEFORMATS=1
           macos-certificate-base64: ${{ secrets.MAC_CERT_B64 }}
           macos-certificate-password: ${{ secrets.MAC_CERT_PASSWORD }}
           macos-notarize-team-id: ${{ secrets.MAC_NOTARIZE_TEAM_ID }}
