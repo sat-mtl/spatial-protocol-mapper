@@ -13,6 +13,7 @@ ApplicationWindow {
     height: 600
     title: "OSC Spatialization Router"
     color: "#1e1e1e"
+    property alias skin: style
 
     Settings {
         id: appSettings
@@ -20,9 +21,14 @@ ApplicationWindow {
 
         property int listenPort: 18032
         property bool logReceivedMessages: true
-        property bool logSentMessages: true
-        property bool monitorVisible: true
+        property bool logSentMessages: false
+        property bool monitorVisible: false
+        property real monitorInterval: 0.015 // in seconds
         property string savedOutputDevices: "[]"
+    }
+
+    Style {
+        id: style
     }
 
     property var inputDevice: null
@@ -46,7 +52,8 @@ ApplicationWindow {
         height: 5
     }
 
-    menuBar: TopMenu {}
+    menuBar: TopMenu {
+    }
 
     SplitView {
         Layout.margins: 10

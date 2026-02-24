@@ -12,6 +12,7 @@ GroupBox {
     SplitView.minimumHeight: 80
     visible: appSettings.monitorVisible
     title: "Message Monitor"
+    topPadding: label.height
 
     background: Rectangle {
         color: "#2a2a2a"
@@ -23,7 +24,7 @@ GroupBox {
         text: parent.title
         color: "#ffffff"
         font.bold: true
-        font.pixelSize: Math.min(14, window.height * 0.025)
+        font.pointSize: skin.fontLarge
         padding: 5
     }
 
@@ -54,7 +55,7 @@ GroupBox {
                         text: "✓"
                         color: "#ffffff"
                         visible: parent.parent.checked
-                        font.pixelSize: 10
+                        font.pointSize: 10
                     }
                 }
 
@@ -62,7 +63,7 @@ GroupBox {
                     text: "Log Received"
                     color: "#ffffff"
                     leftPadding: logReceivedCheckbox.indicator.width + 6
-                    font.pixelSize: Math.min(11, window.height * 0.018)
+                    font.pointSize: skin.fontSmall
                 }
             }
 
@@ -85,7 +86,7 @@ GroupBox {
                         text: "✓"
                         color: "#ffffff"
                         visible: parent.parent.checked
-                        font.pixelSize: 10
+                        font.pointSize: 10
                     }
                 }
 
@@ -93,8 +94,34 @@ GroupBox {
                     text: "Log Sent"
                     color: "#ffffff"
                     leftPadding: logSentCheckbox.indicator.width + 6
-                    font.pixelSize: Math.min(11, window.height * 0.018)
+                    font.pointSize: skin.fontSmall
                 }
+            }
+
+            Label {
+                text: "Rate limit (milliseconds):"
+                color: "#ffffff"
+                verticalAlignment: Text.AlignVCenter
+                font.pointSize: skin.fontMedium
+            }
+
+            TextField {
+                id: rateLimitField
+                Layout.preferredWidth: 80
+                text: 1000. * appSettings.monitorInterval
+                color: acceptableInput ? "#fff" : "#f00"
+                font.pointSize: skin.fontMedium
+
+                background: Rectangle {
+                    color: "#3a3a3a"
+                    border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
+                    radius: 2
+                }
+                validator: IntValidator {
+                    bottom: 0
+                    top: 1000
+                }
+                onTextChanged: appSettings.monitorInterval = parseFloat(rateLimitField.text) / 1000.
             }
 
             Item {
@@ -118,7 +145,7 @@ GroupBox {
                     color: "#ffffff"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: Math.min(10, window.height * 0.016)
+                    font.pointSize: skin.fontSmall
                 }
             }
         }
@@ -138,8 +165,8 @@ GroupBox {
                 readOnly: true
                 selectByMouse: true
                 color: "#00ff00"
-                font.family: "Consolas, Monaco, monospace"
-                font.pixelSize: Math.min(11, window.height * 0.018)
+                font.family: skin.fontMonospace
+                font.pointSize: skin.fontSmall
                 wrapMode: TextArea.Wrap
                 padding: 8
 
