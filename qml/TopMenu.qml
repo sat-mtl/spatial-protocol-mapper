@@ -7,14 +7,14 @@ import Score.UI as UI
 import "./Engine.js" as Engine
 
 RowLayout {
-
+    property Style style
     spacing: 10
 
     Label {
         text: "Quick Setup:"
         color: "#ffffff"
         verticalAlignment: Text.AlignVCenter
-        font.pixelSize: Math.min(12, window.height * 0.02)
+        font.pointSize: skin.fontMedium
     }
 
     Button {
@@ -33,7 +33,7 @@ RowLayout {
             color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
     }
 
@@ -53,7 +53,7 @@ RowLayout {
             color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
     }
 
@@ -73,7 +73,7 @@ RowLayout {
             color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
     }
 
@@ -98,7 +98,7 @@ RowLayout {
             color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
     }
 
@@ -123,7 +123,7 @@ RowLayout {
             color: "#ffffff"
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
     }
 }

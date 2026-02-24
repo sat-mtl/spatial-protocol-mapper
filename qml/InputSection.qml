@@ -13,6 +13,7 @@ GroupBox {
     SplitView.minimumHeight: 100
     SplitView.preferredHeight: 100
     title: "Input Configuration (from ControlGRIS)"
+    topPadding: label.height
 
     background: Rectangle {
         color: "#2a2a2a"
@@ -24,28 +25,27 @@ GroupBox {
         text: parent.title
         color: "#ffffff"
         font.bold: true
-        font.pixelSize: Math.min(14, window.height * 0.025)
+        font.pointSize: skin.fontLarge
         padding: 5
     }
 
     RowLayout {
         anchors.top: parent.top
         anchors.left: parent.left
-        spacing: 10
 
         Label {
             text: "Listen Port:"
             color: "#ffffff"
             verticalAlignment: Text.AlignVCenter
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
         }
 
         TextField {
             id: inputPortField
-            Layout.preferredWidth: Math.min(80, window.width * 0.1)
+            Layout.preferredWidth: 80
             text: "18032"
             color: acceptableInput ? "#fff" : "#f00"
-            font.pixelSize: Math.min(12, window.height * 0.02)
+            font.pointSize: skin.fontMedium
 
             background: Rectangle {
                 color: "#3a3a3a"
@@ -75,7 +75,7 @@ GroupBox {
                 color: "#ffffff"
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
-                font.pixelSize: Math.min(12, window.height * 0.02)
+                font.pointSize: skin.fontMedium
             }
         }
 

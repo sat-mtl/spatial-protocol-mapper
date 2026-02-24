@@ -11,6 +11,7 @@ GroupBox {
     SplitView.fillHeight: true
     SplitView.minimumHeight: 200
     title: "Output Devices"
+    topPadding: label.height
 
     background: Rectangle {
         color: "#2a2a2a"
@@ -22,7 +23,7 @@ GroupBox {
         text: parent.title
         color: "#ffffff"
         font.bold: true
-        font.pixelSize: Math.min(14, window.height * 0.025)
+        font.pointSize: skin.fontLarge
         padding: 5
     }
 
@@ -41,7 +42,7 @@ GroupBox {
                 id: outputNameField
                 Layout.preferredWidth: Math.max(100, Math.min(150, window.width * 0.15))
                 color: "#ffffff"
-                font.pixelSize: Math.min(12, window.height * 0.02)
+                font.pointSize: skin.fontMedium
                 placeholderText: "(Name)"
                 placeholderTextColor: "#888"
 
@@ -58,7 +59,7 @@ GroupBox {
                 text: "127.0.0.1"
                 placeholderText: "IP Address"
                 color: "#ffffff"
-                font.pixelSize: Math.min(12, window.height * 0.02)
+                font.pointSize: skin.fontMedium
 
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -73,7 +74,7 @@ GroupBox {
                 text: "8000"
                 placeholderText: "Port"
                 color: "#ffffff"
-                font.pixelSize: Math.min(12, window.height * 0.02)
+                font.pointSize: skin.fontMedium
 
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -102,7 +103,7 @@ GroupBox {
                     color: "#ffffff"
                     verticalAlignment: Text.AlignVCenter
                     leftPadding: 10
-                    font.pixelSize: 12
+                    font.pointSize: skin.fontMedium
                 }
                 delegate: ItemDelegate {
                     width: parent.width
@@ -115,7 +116,7 @@ GroupBox {
                         text: modelData
                         color: "#ffffff"
                         verticalAlignment: Text.AlignVCenter
-                        font.pixelSize: Math.min(12, window.height * 0.02)
+                        font.pointSize: skin.fontMedium
                     }
                 }
                 /*
@@ -163,7 +164,7 @@ GroupBox {
                     color: "#ffffff"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    font.pixelSize: Math.min(12, window.height * 0.02)
+                    font.pointSize: skin.fontMedium
                 }
             }
 
@@ -224,7 +225,7 @@ GroupBox {
                                     text: "✓"
                                     color: "#ffffff"
                                     visible: parent.parent.checked
-                                    font.pixelSize: Math.min(12, window.height * 0.02)
+                                    font.pointSize: skin.fontMedium
                                 }
                             }
                         }
@@ -234,7 +235,7 @@ GroupBox {
                             color: "#ffffff"
                             Layout.preferredWidth: Math.max(80, window.width * 0.15)
                             elide: Text.ElideRight
-                            font.pixelSize: Math.min(12, window.height * 0.02)
+                            font.pointSize: skin.fontMedium
                         }
 
                         Label {
@@ -242,7 +243,7 @@ GroupBox {
                             color: "#aaaaaa"
                             Layout.fillWidth: true
                             elide: Text.ElideRight
-                            font.pixelSize: Math.min(11, window.height * 0.018)
+                            font.pointSize: skin.fontSmall
                         }
 
                         Button {
@@ -263,7 +264,7 @@ GroupBox {
                                 color: "#ffffff"
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
-                                font.pixelSize: Math.min(11, window.height * 0.018)
+                                font.pointSize: skin.fontSmall
                             }
                         }
                     }
