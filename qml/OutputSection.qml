@@ -90,7 +90,7 @@ GroupBox {
                 currentIndex: 0
 
                 background: Rectangle {
-                    y: 3
+                    y: 1
                     color: "#3a3a3a"
                     border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
                     radius: 2

@@ -6,19 +6,24 @@ import QtQuick.Controls
 import Score.UI as UI
 import "./Engine.js" as Engine
 
+ColumnLayout {
+    Item {
+        height: 2
+        width: 1
+    }
 RowLayout {
     property Style style
     spacing: 10
 
     Label {
-        text: "Quick Setup:"
+        text: " Quick Setup:"
         color: "#ffffff"
         verticalAlignment: Text.AlignVCenter
         font.pointSize: skin.fontMedium
     }
 
     Button {
-        Layout.preferredWidth: Math.max(80, Math.min(120, window.width * 0.12))
+        Layout.preferredWidth: 80
         text: "SpatGRIS"
         onClicked: Engine.createOutputDevice("SpatGRIS_1", "127.0.0.1", 18042, "SpatGRIS")
 
@@ -38,7 +43,7 @@ RowLayout {
     }
 
     Button {
-        Layout.preferredWidth: Math.max(80, Math.min(120, window.width * 0.12))
+        Layout.preferredWidth: 80
         text: "ADM-OSC"
         onClicked: Engine.createOutputDevice("ADM_1", "127.0.0.1", 9000, "ADM-OSC")
 
@@ -58,7 +63,7 @@ RowLayout {
     }
 
     Button {
-        Layout.preferredWidth: Math.max(80, Math.min(120, window.width * 0.12))
+        Layout.preferredWidth: 80
         text: "SPAT Rev"
         onClicked: Engine.createOutputDevice("SPAT_1", "127.0.0.1", 8088, "SPAT Revolution")
 
@@ -126,4 +131,5 @@ RowLayout {
             font.pointSize: skin.fontMedium
         }
     }
+}
 }

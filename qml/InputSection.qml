@@ -61,7 +61,7 @@ GroupBox {
 
         Button {
             text: "Apply"
-            Layout.preferredWidth: Math.min(80, window.width * 0.1)
+            Layout.preferredWidth: 80
             onClicked: Engine.createInputDevice(parseInt(inputPortField.text))
 
             background: Rectangle {
