@@ -13,6 +13,7 @@ ApplicationWindow {
     height: 600
     title: "OSC Spatialization Router"
     color: "#1e1e1e"
+    font: style.fontSans
     property alias skin: style
 
     Settings {
@@ -53,10 +54,12 @@ ApplicationWindow {
     }
 
     menuBar: TopMenu {
+
     }
 
     SplitView {
-        Layout.margins: 10
+        // Layout.margins: 10
+        // padding: 5
         anchors.fill: parent
         orientation: Qt.Vertical
 
