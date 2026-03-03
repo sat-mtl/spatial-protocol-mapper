@@ -45,7 +45,9 @@ jobs:
         uses: ossia/actions/package-custom-app@master
         with:
           app-name: "Spatial Protocol Mapper"
-          qml-files: "qml"
+          qml-files:
+            qml/Main.qml
+            qml
           score-build-id: ${{ steps.score.outputs.artifact-id }}
           platforms: "${{ matrix.platform }}"
           # App metadata
