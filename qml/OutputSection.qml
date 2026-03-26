@@ -246,6 +246,33 @@ GroupBox {
                             font.pointSize: skin.fontSmall
                         }
 
+                        Label {
+                            text: "Offset:"
+                            color: "#aaaaaa"
+                            font.pixelSize: Math.min(11, window.height * 0.018)
+                        }
+
+                        TextField {
+                            Layout.preferredWidth: 50
+                            Layout.preferredHeight: 25
+                            text: model.sourceIndexOffset !== undefined ? model.sourceIndexOffset : "0"
+                            color: acceptableInput ? "#ffffff" : "#f00"
+                            font.pixelSize: Math.min(11, window.height * 0.018)
+                            horizontalAlignment: Text.AlignHCenter
+                            validator: IntValidator { bottom: 0; top: 9999; }
+
+                            background: Rectangle {
+                                color: "#2a2a2a"
+                                border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
+                                radius: 2
+                            }
+
+                            onTextEdited: {
+                                outputDevices[index].sourceIndexOffset = parseInt(text) || 0
+                                Engine.saveOutputDevices()
+                            }
+                        }
+
                         Button {
                             Layout.preferredWidth: Math.max(60, Math.min(80, window.width * 0.08))
                             Layout.preferredHeight: 25

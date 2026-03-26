@@ -6,11 +6,16 @@ function restoreSavedSettings() {
         const savedOutputs = JSON.parse(appSettings.savedOutputDevices);
         for (let output of savedOutputs) {
             createOutputDevice(output.name, output.host, output.port, output.type);
-            // Restore active state after creation
-            if (output.active === false) {
-                outputDevices[outputDevices.length - 1].active = false;
-                updateOutputList();
+            // Restore active state and source index offset after creation
+            const lastIdx = outputDevices.length - 1
+            if (output.sourceIndexOffset) {
+                outputDevices[lastIdx].sourceIndexOffset = output.sourceIndexOffset
             }
+
+            if (output.active === false) {
+                outputDevices[lastIdx].active = false
+            }
+            updateOutputList();
         }
     } catch (e) {
         console.log("Could not restore saved outputs:", e);
@@ -24,7 +29,8 @@ function saveOutputDevices() {
             host: d.host,
             port: d.port,
             type: d.type,
-            active: d.active
+            active: d.active,
+            sourceIndexOffset: d.sourceIndexOffset || 0
         };
     });
     appSettings.savedOutputDevices = JSON.stringify(toSave);
@@ -69,7 +75,8 @@ function onInputValueReceived(address, value) {
     // Route to all active outputs
     for (let output of outputDevices) {
         if (output.active) {
-            const mapped = mapControlGRISMessage(command, sourceIndex, value, output.type);
+            const mapped = mapControlGRISMessage(command, sourceIndex + (output.sourceIndexOffset || 0), value, output.type);
+
             if (mapped && mapped.length > 0) {
                 // Send each mapped message to output device
                 for (let msg of mapped) {
@@ -371,7 +378,8 @@ function createOutputDevice(name, host, port, type) {
         host: host,
         port: port,
         type: type,
-        active: true
+        active: true,
+        sourceIndexOffset: 0
     });
 
     updateOutputList();
