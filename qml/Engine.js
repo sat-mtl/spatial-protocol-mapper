@@ -36,13 +36,22 @@ function saveOutputDevices() {
     appSettings.savedOutputDevices = JSON.stringify(toSave);
 }
 
-var g_lastMessageTimestamp = 0;
-function rateLimitLog()
+var g_lastInputLogTimestamp = 0;
+var g_lastOutputLogTimestamp = 0;
+function rateLimitInputLog()
 {
     const ts = Util.timestamp();
-    if((ts - g_lastMessageTimestamp) < appSettings.monitorInterval)
+    if((ts - g_lastInputLogTimestamp) < appSettings.monitorInterval)
       return false;
-    g_lastMessageTimestamp = ts;
+    g_lastInputLogTimestamp = ts;
+    return true;
+}
+function rateLimitOutputLog()
+{
+    const ts = Util.timestamp();
+    if((ts - g_lastOutputLogTimestamp) < appSettings.monitorInterval)
+      return false;
+    g_lastOutputLogTimestamp = ts;
     return true;
 }
 
@@ -55,7 +64,7 @@ function logMessage(message) {
 }
 
 function onInputValueReceived(address, value) {
-    if (appSettings.logReceivedMessages && messageMonitor.visible && rateLimitLog()) {
+    if (appSettings.logReceivedMessages && messageMonitor.visible && rateLimitInputLog()) {
         logMessage(`IN: ${address} = ${JSON.stringify(value)}`);
     }
 
@@ -100,7 +109,7 @@ function onInputValueReceived(address, value) {
                 for (let msg of mapped) {
                     let full_address = `${output.name}:${msg.address}`;
                     Device.write(full_address, msg.value);
-                    if (appSettings.logSentMessages && messageMonitor.visible && rateLimitLog()) {
+                    if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
                         logMessage(`OUT: ${full_address} = ${JSON.stringify(msg.value)}`);
                     }
                 }
