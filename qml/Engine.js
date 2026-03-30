@@ -69,13 +69,31 @@ function onInputValueReceived(address, value) {
         return;
     }
 
-    const command = value[0];
-    const sourceIndex = value[1];
+    var mapped_messages;
+    if (typeof value[0] === "number") {
+        // Legacy SpatGRIS format: iffffff
+        // [sourceIndex, azimuth, elevation, azSpan, elSpan, radius, reserved]
+        mapped_messages = mapLegacySpatGRIS(value);
+    } else {
+        // Current format: [command, sourceIndex, ...]
+        mapped_messages = {command: value[0], sourceIndex: value[1]};
+    }
 
     // Route to all active outputs
     for (let output of outputDevices) {
         if (output.active) {
-            const mapped = mapControlGRISMessage(command, sourceIndex + (output.sourceIndexOffset || 0), value, output.type);
+            var mapped;
+            if (mapped_messages.command !== undefined) {
+                mapped = mapControlGRISMessage(mapped_messages.command, mapped_messages.sourceIndex + (output.sourceIndexOffset || 0), value, output.type);
+            } else {
+                mapped = mapPolarToOutput(
+                    mapped_messages.sourceIndex + (output.sourceIndexOffset || 0),
+                    mapped_messages.azimuth, mapped_messages.elevation,
+                    mapped_messages.radius,
+                    mapped_messages.hspan, mapped_messages.vspan,
+                    output.type, false
+                );
+            }
 
             if (mapped && mapped.length > 0) {
                 // Send each mapped message to output device
@@ -89,6 +107,21 @@ function onInputValueReceived(address, value) {
             }
         }
     }
+}
+
+function mapLegacySpatGRIS(value) {
+    if (value.length < 7) {
+        return { sourceIndex: value[0] };
+    }
+    return {
+        sourceIndex: value[0],
+        azimuth: value[1],
+        elevation: value[2],
+        hspan: value[3],
+        vspan: value[4],
+        radius: value[5]
+        // value[6] is reserved
+    };
 }
 
 function mapControlGRISMessage(command, sourceIndex, value, outputType) {
