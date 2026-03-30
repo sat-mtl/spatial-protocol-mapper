@@ -45,6 +45,7 @@ GroupBox {
                 font.pointSize: skin.fontMedium
                 placeholderText: "(Name)"
                 placeholderTextColor: "#888"
+                onTextChanged: outputError = ""
 
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -58,8 +59,15 @@ GroupBox {
                 Layout.preferredWidth: Math.max(100, Math.min(150, window.width * 0.15))
                 text: "127.0.0.1"
                 placeholderText: "IP Address"
-                color: "#ffffff"
+                color: {
+                    var t = text.trim();
+                    if (t === "") return "#888";
+                    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(t) || /^[a-zA-Z0-9][a-zA-Z0-9.\-]*$/.test(t))
+                        return "#ffffff";
+                    return "#ff4444";
+                }
                 font.pointSize: skin.fontMedium
+                onTextChanged: outputError = ""
 
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -73,8 +81,10 @@ GroupBox {
                 Layout.preferredWidth: Math.max(60, Math.min(100, window.width * 0.1))
                 text: "8000"
                 placeholderText: "Port"
-                color: "#ffffff"
+                color: acceptableInput ? "#ffffff" : "#ff4444"
                 font.pointSize: skin.fontMedium
+                validator: IntValidator { bottom: 1; top: 65535 }
+                onTextChanged: outputError = ""
 
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -145,12 +155,32 @@ GroupBox {
                 Layout.preferredWidth: Math.max(50, Math.min(80, window.width * 0.08))
 
                 onClicked: {
-                    console.log(outputNameField.text, outputHostField.text, outputPortField.text);
-                    if (outputNameField.text && outputHostField.text && outputPortField.text) {
-                        Engine.createOutputDevice(outputNameField.text, outputHostField.text, parseInt(outputPortField.text), outputTypeCombo.currentText);
-                        outputNameField.clear();
-                        outputPortField.text = "8000";
+                    var name = outputNameField.text.trim();
+                    var host = outputHostField.text.trim();
+                    var portStr = outputPortField.text.trim();
+                    var port = parseInt(portStr);
+
+                    if (!name) {
+                        outputError = "Name is required";
+                        return;
                     }
+                    if (!host) {
+                        outputError = "Host is required";
+                        return;
+                    }
+                    if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host) && !/^[a-zA-Z0-9][a-zA-Z0-9.\-]*$/.test(host)) {
+                        outputError = "Invalid host address";
+                        return;
+                    }
+                    if (isNaN(port) || port < 1 || port > 65535) {
+                        outputError = "Port must be between 1 and 65535";
+                        return;
+                    }
+
+                    outputError = "";
+                    Engine.createOutputDevice(name, host, port, outputTypeCombo.currentText);
+                    outputNameField.clear();
+                    outputPortField.text = "8000";
                 }
 
                 background: Rectangle {
@@ -166,6 +196,14 @@ GroupBox {
                     verticalAlignment: Text.AlignVCenter
                     font.pointSize: skin.fontMedium
                 }
+            }
+
+            Label {
+                text: outputError
+                color: "#ff4444"
+                visible: outputError !== ""
+                font.pointSize: skin.fontMedium
+                verticalAlignment: Text.AlignVCenter
             }
 
             Item {

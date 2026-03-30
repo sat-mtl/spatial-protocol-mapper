@@ -39,6 +39,7 @@ ApplicationWindow {
     property var udpInput
     property string inputPortError: ""
     property bool inputListening: false
+    property string outputError: ""
 
     property alias messageMonitor: console_section.messageMonitor
     property alias inputPortField: input_section.inputPortField
