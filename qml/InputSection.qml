@@ -59,24 +59,33 @@ GroupBox {
             onTextChanged: appSettings.listenPort = inputPortField.text
         }
 
-        Button {
-            text: "Apply"
-            Layout.preferredWidth: 80
-            onClicked: Engine.createInputDevice(parseInt(inputPortField.text))
-
-            background: Rectangle {
-                color: parent.hovered ? "#5a5a5a" : "#4a4a4a"
-                border.color: "#6a6a6a"
-                radius: 2
+        CheckBox {
+            id: listenCheckBox
+            text: "Listen"
+            checked: inputListening
+            onToggled: {
+                if (checked) {
+                    Engine.createInputDevice(parseInt(inputPortField.text));
+                } else {
+                    Engine.closeInputDevice();
+                }
             }
 
             contentItem: Label {
                 text: parent.text
                 color: "#ffffff"
-                horizontalAlignment: Text.AlignHCenter
+                leftPadding: parent.indicator.width + parent.spacing
                 verticalAlignment: Text.AlignVCenter
                 font.pointSize: skin.fontMedium
             }
+        }
+
+        Label {
+            text: inputPortError
+            color: "#ff4444"
+            visible: inputPortError !== ""
+            font.pointSize: skin.fontMedium
+            verticalAlignment: Text.AlignVCenter
         }
 
         Item {

@@ -37,6 +37,8 @@ ApplicationWindow {
     property var addressMappings: new Map()
     property var oscInput
     property var udpInput
+    property string inputPortError: ""
+    property bool inputListening: false
 
     property alias messageMonitor: console_section.messageMonitor
     property alias inputPortField: input_section.inputPortField

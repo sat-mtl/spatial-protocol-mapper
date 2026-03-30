@@ -402,12 +402,17 @@ function updateOutputList() {
     }
 }
 
-function createInputDevice(inputPort) {
-    console.log("Cleared old device");
+function closeInputDevice() {
     if (udpInput)
         udpInput.close();
     udpInput = null;
     oscInput = null;
+    inputListening = false;
+    inputPortError = "";
+}
+
+function createInputDevice(inputPort) {
+    closeInputDevice();
     console.log("Creating new device", inputPort);
 
     Qt.callLater(function () {
@@ -425,5 +430,11 @@ function createInputDevice(inputPort) {
                 oscInput.processMessage(bytes);
             }
         });
+
+        if (udpInput) {
+            inputListening = true;
+        } else {
+            inputPortError = "Failed to open port " + inputPort + " (already in use?)";
+        }
     });
 }
