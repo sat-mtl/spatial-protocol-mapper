@@ -56,7 +56,10 @@ GroupBox {
                 bottom: 1
                 top: 65535
             }
-            onTextChanged: appSettings.listenPort = inputPortField.text
+            onTextChanged: {
+                Engine.closeInputDevice();
+                appSettings.listenPort = inputPortField.text
+            }
         }
 
         CheckBox {
