@@ -105,23 +105,46 @@ GroupBox {
                 font.pointSize: skin.fontMedium
             }
 
-            TextField {
+            SpinBox {
                 id: rateLimitField
-                Layout.preferredWidth: 80
-                text: 1000. * appSettings.monitorInterval
-                color: acceptableInput ? "#fff" : "#f00"
+                readonly property int rateLow: 5
+                readonly property int rateHigh: 1000
+                Layout.preferredWidth: 120
+                value: Math.max(Math.min(Math.abs(1000 * appSettings.monitorInterval), rateHigh), rateLow)
+                //textColor: acceptableInput ? "#fff" : "#f00"
                 font.pointSize: skin.fontMedium
-
+                editable: true
+                live: false
+                from: 5
+                to: 1000
+                wrap: false
+                validator: IntValidator {
+                    bottom: 5
+                    top: 1000
+                }
                 background: Rectangle {
                     color: "#3a3a3a"
                     border.color: parent.focus ? "#5a5a5a" : "#4a4a4a"
                     radius: 2
                 }
-                validator: IntValidator {
-                    bottom: 0
-                    top: 1000
+
+                contentItem: TextInput {
+                    z: 2
+                    text: rateLimitField.textFromValue(rateLimitField.value, rateLimitField.locale)
+                    font: rateLimitField.font
+                    color: "#fff"
+                    selectionColor: "#21be2b"
+                    selectedTextColor: "#ffffff"
+                    horizontalAlignment: Qt.AlignHCenter
+                    verticalAlignment: Qt.AlignVCenter
+                    inputMethodHints: Qt.ImhFormattedNumbersOnly
                 }
-                onTextChanged: appSettings.monitorInterval = parseFloat(rateLimitField.text) / 1000.
+                onValueChanged: {
+                    const interval_ms = value;
+                    if(interval_ms >= 5 && interval_ms <= 1000) {
+                        appSettings.monitorInterval = interval_ms / 1000.;
+                    }
+                }
             }
 
             Item {
