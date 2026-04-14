@@ -68,54 +68,170 @@ function onInputValueReceived(address, value) {
         logMessage(`IN: ${address} = ${JSON.stringify(value)}`);
     }
 
-    // Only process /spat/serv messages from ControlGRIS
-    if (address !== "/spat/serv") {
-        return;
-    }
-
-    // Parse ControlGRIS message into a normalized form:
+    // Normalize the incoming message to an internal SpatGRIS-style form:
     //   command    : "pol" | "deg" | "car" | "clr" | "alg"
     //   sourceIndex: 1-based source index (or -1 if n/a)
-    //   args       : command-dependent payload:
-    //     pol/deg: [azimuth, elevation, radius, hspan, vspan]
-    //     car    : [x, y, z, hspan, vspan]
-    //     clr    : []
-    //     alg    : [algorithm]
-    if (value.length < 2) {
+    //   args       : command-dependent payload
+    //     pol   : [azimuthRad, elevationRad, radius, hspan, vspan]
+    //     deg   : [azimuthDeg, elevationDeg, radius, hspan, vspan]
+    //     car   : [x, y, z, hspan, vspan]
+    //     clr   : []
+    //     alg   : [algorithm]
+    // Angles and axes use SpatGRIS conventions internally
+    // (negative azimuth = left). Each output's mapper applies its own flips.
+    let norm = null;
+    if (address.startsWith("/spat/serv")) {
+        norm = parseSpatGRISInput(value);
+    } else if (address.startsWith("/adm/obj/")) {
+        norm = parseADMInput(address, value);
+    } else {
+        // /adm/lis/…, /adm/env/…, or anything else: not translatable.
         return;
     }
-
-    var command, sourceIndex, args;
-    if (typeof value[0] === "number") {
-        // Legacy SpatGRIS format: [sourceIndex, az, el, hspan, vspan, radius, reserved]
-        // This is polar in radians; rewrite to the canonical "pol" shape.
-        if (value.length < 7) return;
-        command = "pol";
-        sourceIndex = value[0];
-        args = [value[1], value[2], value[5], value[3], value[4]];
-    } else {
-        command = value[0];
-        sourceIndex = (typeof value[1] === "number") ? value[1] : -1;
-        args = value.slice(2);
-    }
+    if (!norm) return;
 
     // Route to all active outputs
     for (let output of outputDevices) {
         if (!output.active || !output.udp) continue;
 
-        const idx = sourceIndex + (output.sourceIndexOffset || 0);
-        const mapped = mapMessage(command, idx, args, output.type);
+        const idx = norm.sourceIndex + (output.sourceIndexOffset || 0);
+        const mapped = mapMessage(norm.command, idx, norm.args, output.type);
         if (!mapped || mapped.length === 0) continue;
 
         for (let msg of mapped) {
             // outboundUDP.osc() expects a JS array for the arguments —
             // wrap scalar values so "/a/b" with value 0 doesn't crash.
-            const args = Array.isArray(msg.value) ? msg.value : [msg.value];
-            output.udp.osc(msg.address, args);
+            const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
+            output.udp.osc(msg.address, oscArgs);
             if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
                 logMessage(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
             }
         }
+    }
+}
+
+// ----- Input parsing: /spat/serv -----
+function parseSpatGRISInput(value) {
+    if (!value || value.length < 2) return null;
+
+    if (typeof value[0] === "number") {
+        // Legacy format: [sourceIndex, az, el, hspan, vspan, radius, reserved]
+        // Polar in radians; rewrite to canonical "pol" shape.
+        if (value.length < 7) return null;
+        return {
+            command: "pol",
+            sourceIndex: value[0],
+            args: [value[1], value[2], value[5], value[3], value[4]]
+        };
+    }
+    return {
+        command: value[0],
+        sourceIndex: (typeof value[1] === "number") ? value[1] : -1,
+        args: value.slice(2)
+    };
+}
+
+// ----- Input parsing: /adm/obj/{n}/… -----
+// ADM sends per-parameter messages, not atomic packets, so we maintain
+// per-source state and emit a complete SpatGRIS-form command on every
+// incoming update. The last coordinate family written (polar vs cartesian)
+// determines whether we emit a "deg" or "car" command downstream.
+var g_admSourceState = {};
+
+function getAdmSource(n) {
+    if (!g_admSourceState[n]) {
+        // Defaults per ADM-OSC spec:
+        //   azim, elev: (unspecified) → 0
+        //   dist      : 1.0 (on reference sphere)
+        //   xyz       : 0
+        //   w         : 0
+        g_admSourceState[n] = {
+            azim: 0, elev: 0, dist: 1.0,
+            x: 0, y: 0, z: 0,
+            w: 0,
+            lastMode: "car"
+        };
+    }
+    return g_admSourceState[n];
+}
+
+function parseADMInput(address, value) {
+    // Match /adm/obj/<n>/<param> exactly (no wildcards).
+    const m = address.match(/^\/adm\/obj\/(\d+)\/(\w+)$/);
+    if (!m) return null;
+
+    const n = parseInt(m[1]);
+    const param = m[2];
+    const s = getAdmSource(n);
+
+    if (!value) return null;
+
+    switch (param) {
+    case "aed":
+        if (value.length < 3) return null;
+        s.azim = value[0]; s.elev = value[1]; s.dist = value[2];
+        s.lastMode = "pol";
+        break;
+    case "azim":
+        if (value.length < 1) return null;
+        s.azim = value[0]; s.lastMode = "pol";
+        break;
+    case "elev":
+        if (value.length < 1) return null;
+        s.elev = value[0]; s.lastMode = "pol";
+        break;
+    case "dist":
+        if (value.length < 1) return null;
+        s.dist = value[0]; s.lastMode = "pol";
+        break;
+    case "xyz":
+        if (value.length < 3) return null;
+        s.x = value[0]; s.y = value[1]; s.z = value[2];
+        s.lastMode = "car";
+        break;
+    case "xy":
+        if (value.length < 2) return null;
+        s.x = value[0]; s.y = value[1];
+        s.lastMode = "car";
+        break;
+    case "x":
+        if (value.length < 1) return null;
+        s.x = value[0]; s.lastMode = "car";
+        break;
+    case "y":
+        if (value.length < 1) return null;
+        s.y = value[0]; s.lastMode = "car";
+        break;
+    case "z":
+        if (value.length < 1) return null;
+        s.z = value[0]; s.lastMode = "car";
+        break;
+    case "w":
+        if (value.length < 1) return null;
+        s.w = value[0];
+        // Width alone doesn't switch coordinate mode; re-emit with current mode.
+        break;
+    default:
+        // gain/mute/name/dref/dmax — no equivalent in our internal model.
+        return null;
+    }
+
+    // Emit in SpatGRIS-convention internal form.
+    // Axes match (x=L/R, y=B/F, z=D/U with same sign), so xyz passes through.
+    // ADM azimuth: +90° = left. SpatGRIS azimuth: -90° = left. → sign flip.
+    // ADM has no vertical extent → vspan = 0.
+    if (s.lastMode === "pol") {
+        return {
+            command: "deg",
+            sourceIndex: n,
+            args: [-s.azim, s.elev, s.dist, s.w, 0]
+        };
+    } else {
+        return {
+            command: "car",
+            sourceIndex: n,
+            args: [s.x, s.y, s.z, s.w, 0]
+        };
     }
 }
 
