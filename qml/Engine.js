@@ -84,28 +84,60 @@ function onInputValueReceived(address, value) {
         norm = parseSpatGRISInput(value);
     } else if (address.startsWith("/adm/obj/")) {
         norm = parseADMInput(address, value);
-    } else {
-        // /adm/lis/…, /adm/env/…, or anything else: not translatable.
+    }
+
+    if (norm) {
+        // Translate to each output's native protocol.
+        for (let output of outputDevices) {
+            if (!output.active || !output.udp) continue;
+
+            const idx = norm.sourceIndex + (output.sourceIndexOffset || 0);
+            const mapped = mapMessage(norm.command, idx, norm.args, output.type);
+            if (!mapped || mapped.length === 0) continue;
+
+            for (let msg of mapped) {
+                // outboundUDP.osc() expects a JS array for the arguments —
+                // wrap scalar values so "/a/b" with value 0 doesn't crash.
+                const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
+                output.udp.osc(msg.address, oscArgs);
+                if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
+                    logMessage(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
+                }
+            }
+        }
         return;
     }
-    if (!norm) return;
 
-    // Route to all active outputs
+    // Messages we couldn't translate that still belong to a protocol
+    // we have outputs for: pass them through verbatim. This lets
+    // ADM-specific features (gain, mute, name, /adm/lis, /adm/env, …)
+    // reach ADM-OSC outputs even though we don't understand them.
+    if (address.startsWith("/adm/")) {
+        forwardAdmRaw(address, value);
+    }
+}
+
+function forwardAdmRaw(address, value) {
+    const oscArgs = Array.isArray(value) ? value : [value];
+
     for (let output of outputDevices) {
         if (!output.active || !output.udp) continue;
+        if (output.type !== "ADM-OSC") continue;
 
-        const idx = norm.sourceIndex + (output.sourceIndexOffset || 0);
-        const mapped = mapMessage(norm.command, idx, norm.args, output.type);
-        if (!mapped || mapped.length === 0) continue;
-
-        for (let msg of mapped) {
-            // outboundUDP.osc() expects a JS array for the arguments —
-            // wrap scalar values so "/a/b" with value 0 doesn't crash.
-            const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
-            output.udp.osc(msg.address, oscArgs);
-            if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
-                logMessage(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
+        // Only /adm/obj/{n}/… carries a source index; /adm/lis and
+        // /adm/env don't. Apply the per-output offset only when relevant.
+        let outAddress = address;
+        const offset = output.sourceIndexOffset || 0;
+        if (offset !== 0) {
+            const m = address.match(/^\/adm\/obj\/(\d+)(\/.*)$/);
+            if (m) {
+                outAddress = `/adm/obj/${parseInt(m[1]) + offset}${m[2]}`;
             }
+        }
+
+        output.udp.osc(outAddress, oscArgs);
+        if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
+            logMessage(`OUT: ${output.name} ${outAddress} = ${JSON.stringify(value)}`);
         }
     }
 }
