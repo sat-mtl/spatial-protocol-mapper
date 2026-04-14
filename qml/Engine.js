@@ -73,364 +73,253 @@ function onInputValueReceived(address, value) {
         return;
     }
 
-    // Parse ControlGRIS message
+    // Parse ControlGRIS message into a normalized form:
+    //   command    : "pol" | "deg" | "car" | "clr" | "alg"
+    //   sourceIndex: 1-based source index (or -1 if n/a)
+    //   args       : command-dependent payload:
+    //     pol/deg: [azimuth, elevation, radius, hspan, vspan]
+    //     car    : [x, y, z, hspan, vspan]
+    //     clr    : []
+    //     alg    : [algorithm]
     if (value.length < 2) {
         return;
     }
 
-    var mapped_messages;
+    var command, sourceIndex, args;
     if (typeof value[0] === "number") {
-        // Legacy SpatGRIS format: iffffff
-        // [sourceIndex, azimuth, elevation, azSpan, elSpan, radius, reserved]
-        mapped_messages = mapLegacySpatGRIS(value);
+        // Legacy SpatGRIS format: [sourceIndex, az, el, hspan, vspan, radius, reserved]
+        // This is polar in radians; rewrite to the canonical "pol" shape.
+        if (value.length < 7) return;
+        command = "pol";
+        sourceIndex = value[0];
+        args = [value[1], value[2], value[5], value[3], value[4]];
     } else {
-        // Current format: [command, sourceIndex, ...]
-        mapped_messages = {command: value[0], sourceIndex: value[1]};
+        command = value[0];
+        sourceIndex = (typeof value[1] === "number") ? value[1] : -1;
+        args = value.slice(2);
     }
 
     // Route to all active outputs
     for (let output of outputDevices) {
-        if (output.active) {
-            var mapped;
-            if (mapped_messages.command !== undefined) {
-                mapped = mapControlGRISMessage(mapped_messages.command, mapped_messages.sourceIndex + (output.sourceIndexOffset || 0), value, output.type);
-            } else {
-                mapped = mapPolarToOutput(
-                    mapped_messages.sourceIndex + (output.sourceIndexOffset || 0),
-                    mapped_messages.azimuth, mapped_messages.elevation,
-                    mapped_messages.radius,
-                    mapped_messages.hspan, mapped_messages.vspan,
-                    output.type, false
-                );
-            }
+        if (!output.active || !output.udp) continue;
 
-            if (mapped && mapped.length > 0) {
-                // Send each mapped message to output device
-                for (let msg of mapped) {
-                    let full_address = `${output.name}:${msg.address}`;
-                    Device.write(full_address, msg.value);
-                    if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
-                        logMessage(`OUT: ${full_address} = ${JSON.stringify(msg.value)}`);
-                    }
-                }
+        const idx = sourceIndex + (output.sourceIndexOffset || 0);
+        const mapped = mapMessage(command, idx, args, output.type);
+        if (!mapped || mapped.length === 0) continue;
+
+        for (let msg of mapped) {
+            // outboundUDP.osc() expects a JS array for the arguments —
+            // wrap scalar values so "/a/b" with value 0 doesn't crash.
+            const args = Array.isArray(msg.value) ? msg.value : [msg.value];
+            output.udp.osc(msg.address, args);
+            if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
+                logMessage(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
             }
         }
     }
 }
 
-function mapLegacySpatGRIS(value) {
-    if (value.length < 7) {
-        return { sourceIndex: value[0] };
+function mapMessage(command, idx, args, outputType) {
+    switch (outputType) {
+    case "SpatGRIS":       return mapForSpatGRIS(command, idx, args);
+    case "ADM-OSC":        return mapForADM(command, idx, args);
+    case "SPAT Revolution": return mapForSPAT(command, idx, args);
     }
-    return {
-        sourceIndex: value[0],
-        azimuth: value[1],
-        elevation: value[2],
-        hspan: value[3],
-        vspan: value[4],
-        radius: value[5]
-        // value[6] is reserved
-    };
+    return [];
 }
 
-function mapControlGRISMessage(command, sourceIndex, value, outputType) {
-    const messages = [];
-
+// ----- SpatGRIS: pass /spat/serv through verbatim -----
+// The SpatGRIS server speaks /spat/serv natively, so we re-emit the
+// command with the exact coordinate system we received. No lossy
+// polar<->cartesian round-trip.
+function mapForSpatGRIS(command, idx, args) {
     switch (command) {
-    case "pol": // Polar coordinates in radians
-        if (value.length >= 7) {
-            const azimuth = value[2];
-            const elevation = value[3];
-            const radius = value[4];
-            const hspan = value[5];
-            const vspan = value[6];
-
-            messages.push(...mapPolarToOutput(sourceIndex, azimuth, elevation, radius, hspan, vspan, outputType, false));
-        }
-        break;
-    case "deg": // Polar coordinates in degrees
-        if (value.length >= 7) {
-            const azimuth = value[2] * Math.PI / 180.0;  // Convert to radians for internal processing
-            const elevation = value[3] * Math.PI / 180.0;
-            const radius = value[4];
-            const hspan = value[5];
-            const vspan = value[6];
-
-            messages.push(...mapPolarToOutput(sourceIndex, azimuth, elevation, radius, hspan, vspan, outputType, true));
-        }
-        break;
-    case "car": // Cartesian coordinates
-        if (value.length >= 7) {
-            const x = value[2];
-            const y = value[3];
-            const z = value[4];
-            const hspan = value[5];
-            const vspan = value[6];
-
-            messages.push(...mapCartesianToOutput(sourceIndex, x, y, z, hspan, vspan, outputType));
-        }
-        break;
-    case "clr": // Clear source position
-        messages.push(...mapClearToOutput(sourceIndex, outputType));
-        break;
-    case "alg": // Algorithm selection (hybrid mode)
-        if (value.length >= 3) {
-            const algorithm = value[2];
-            messages.push(...mapAlgorithmToOutput(sourceIndex, algorithm, outputType));
-        }
-        break;
+    case "pol":
+    case "deg":
+    case "car":
+        if (args.length < 5) return [];
+        return [{
+            address: "/spat/serv",
+            value: [command, idx, args[0], args[1], args[2], args[3], args[4]]
+        }];
+    case "clr":
+        return [{ address: "/spat/serv", value: ["clr", idx] }];
+    case "alg":
+        if (args.length < 1) return [];
+        // alg idx <dome|cube>
+        return [{ address: "/spat/serv", value: ["alg", idx, args[0]] }];
     }
+    return [];
+}
 
+// ----- ADM-OSC (v1.0) -----
+// Conventions:
+//   - Azimuth: SpatGRIS uses −90° = left / +90° = right (example in spec:
+//     "deg 7 -90.0 ... moves source #7 at the extreme left").
+//     ADM uses +90° = left / −90° = right. → sign flipped.
+//   - Elevation: both use 0° = horizon, +90° = above. → no change.
+//   - Cartesian axes match: x = L/R, y = B/F, z = D/U with same signs.
+// Ranges differ (SpatGRIS radius ∈ [−3, 3], xyz ∈ [−1.66, 1.66];
+// ADM dist ∈ [0, 1], xyz ∈ [−1, 1]). Per ADM-OSC §9 receivers must clamp,
+// so we pass values through unchanged rather than impose a scaling that
+// would change the physical position.
+// ADM has no vertical-extent address — vspan is dropped.
+// Packed /aed and /xyz are used per the spec's atomicity recommendation.
+function mapForADM(command, idx, args) {
+    switch (command) {
+    case "pol":
+        if (args.length < 5) return [];
+        return polarToADM(idx, args[0], args[1], args[2], args[3]);
+    case "deg":
+        if (args.length < 5) return [];
+        return polarToADM(idx,
+                          args[0] * Math.PI / 180.0,
+                          args[1] * Math.PI / 180.0,
+                          args[2], args[3]);
+    case "car":
+        if (args.length < 5) return [];
+        return cartesianToADM(idx, args[0], args[1], args[2], args[3]);
+    case "clr":
+        // Packed xyz for atomic reset.
+        return [{ address: `/adm/obj/${idx}/xyz`, value: [0, 0, 0] }];
+    case "alg":
+        // ADM has no algorithm concept.
+        return [];
+    }
+    return [];
+}
+
+function polarToADM(idx, azimuthRad, elevationRad, radius, hspan) {
+    const messages = [{
+        address: `/adm/obj/${idx}/aed`,
+        value: [
+            -azimuthRad   * 180.0 / Math.PI,  // SpatGRIS → ADM azimuth sign flip
+             elevationRad * 180.0 / Math.PI,
+             radius
+        ]
+    }];
+    if (hspan !== undefined) {
+        // ADM /w is normalized [0, 1]; SpatGRIS hspan is already [0, 1].
+        messages.push({ address: `/adm/obj/${idx}/w`, value: hspan });
+    }
     return messages;
 }
 
-function mapPolarToOutput(sourceIndex, azimuth, elevation, radius, hspan, vspan, outputType, isDegrees) {
-    const messages = [];
-
-    switch (outputType) {
-    case "SpatGRIS":
-        // SpatGRIS score implementation expects individual position values
-        messages.push({
-            address: `/${sourceIndex}/azimuth`,
-            value: azimuth
-        });
-        messages.push({
-            address: `/${sourceIndex}/elevation`,
-            value: elevation
-        });
-        messages.push({
-            address: `/${sourceIndex}/distance`,
-            value: radius
-        });
-        if (hspan !== undefined && vspan !== undefined) {
-            messages.push({
-                address: `/${sourceIndex}/hspan`,
-                value: hspan
-            });
-            messages.push({
-                address: `/${sourceIndex}/vspan`,
-                value: vspan
-            });
-        }
-        break;
-    case "ADM-OSC":
-        // ADM-OSC uses spherical coordinates in degrees
-        const admAzimuth = azimuth * 180.0 / Math.PI;
-        const admElevation = elevation * 180.0 / Math.PI;
-
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/azim`,
-            value: admAzimuth
-        });
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/elev`,
-            value: admElevation
-        });
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/dist`,
-            value: radius
-        });
-        if (hspan !== undefined) {
-            messages.push({
-                address: `/adm/obj/${sourceIndex}/w`,
-                value: hspan * 360  // Convert to degrees
-            });
-        }
-        if (vspan !== undefined) {
-            messages.push({
-                address: `/adm/obj/${sourceIndex}/h`,
-                value: vspan * 180  // Convert to degrees
-            });
-        }
-        break;
-    case "SPAT Revolution":
-        // SPAT uses /source/N/aed format with degrees
-        messages.push({
-            address: `/source/${sourceIndex}/aed`,
-            value: [azimuth * 180.0 / Math.PI  // Convert to degrees
-                , elevation * 180.0 / Math.PI, radius * 100  // SPAT uses percentage (0-100)
-            ]
-        });
-        if (hspan !== undefined && vspan !== undefined) {
-            messages.push({
-                address: `/source/${sourceIndex}/spread`,
-                value: (hspan + vspan) / 2 * 100  // Average spread as percentage
-            });
-        }
-        break;
+function cartesianToADM(idx, x, y, z, hspan) {
+    const messages = [{
+        address: `/adm/obj/${idx}/xyz`,
+        value: [x, y, z]
+    }];
+    if (hspan !== undefined) {
+        messages.push({ address: `/adm/obj/${idx}/w`, value: hspan });
     }
-
     return messages;
 }
 
-function mapCartesianToOutput(sourceIndex, x, y, z, hspan, vspan, outputType) {
-    const messages = [];
-
-    switch (outputType) {
-    case "SpatGRIS":
-        // SpatGRIS score implementation expects individual coordinates
-        messages.push({
-            address: `/${sourceIndex}/position`,
-            value: [x, y, z]
-        });
-        if (hspan !== undefined && vspan !== undefined) {
-            messages.push({
-                address: `/${sourceIndex}/hspan`,
-                value: hspan
-            });
-            messages.push({
-                address: `/${sourceIndex}/vspan`,
-                value: vspan
-            });
-        }
-        break;
-    case "ADM-OSC":
-        // ADM-OSC uses cartesian coordinates
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/xyz`,
-            value: [x, y, z]
-        });
-        if (hspan !== undefined) {
-            messages.push({
-                address: `/adm/obj/${sourceIndex}/w`,
-                value: hspan * 360  // Convert to degrees
-            });
-        }
-        if (vspan !== undefined) {
-            messages.push({
-                address: `/adm/obj/${sourceIndex}/h`,
-                value: vspan * 180  // Convert to degrees
-            });
-        }
-        break;
-    case "SPAT Revolution":
-        // SPAT uses /source/N/xyz format
-        messages.push({
-            address: `/source/${sourceIndex}/xyz`,
-            value: [x, y, z]
-        });
-        if (hspan !== undefined && vspan !== undefined) {
-            messages.push({
-                address: `/source/${sourceIndex}/spread`,
-                value: (hspan + vspan) / 2 * 100  // Average spread as percentage
-            });
-        }
-        break;
+// ----- SPAT Revolution: /source/N/aed or /source/N/xyz -----
+function mapForSPAT(command, idx, args) {
+    switch (command) {
+    case "pol":
+        if (args.length < 5) return [];
+        return polarToSPAT(idx, args[0], args[1], args[2], args[3], args[4]);
+    case "deg":
+        if (args.length < 5) return [];
+        return polarToSPAT(idx,
+                           args[0] * Math.PI / 180.0,
+                           args[1] * Math.PI / 180.0,
+                           args[2], args[3], args[4]);
+    case "car":
+        if (args.length < 5) return [];
+        return cartesianToSPAT(idx, args[0], args[1], args[2], args[3], args[4]);
+    case "clr":
+        return [{ address: `/source/${idx}/xyz`, value: [0, 0, 0] }];
+    case "alg":
+        if (args.length < 1) return [];
+        return [{
+            address: `/source/${idx}/mode`,
+            value: args[0] === "dome" ? "dome" : "panning"
+        }];
     }
+    return [];
+}
 
+function polarToSPAT(idx, azimuthRad, elevationRad, radius, hspan, vspan) {
+    const messages = [{
+        address: `/source/${idx}/aed`,
+        value: [
+            azimuthRad   * 180.0 / Math.PI,
+            elevationRad * 180.0 / Math.PI,
+            radius * 100  // SPAT uses percentage (0-100)
+        ]
+    }];
+    if (hspan !== undefined && vspan !== undefined) {
+        messages.push({
+            address: `/source/${idx}/spread`,
+            value: (hspan + vspan) / 2 * 100
+        });
+    }
     return messages;
 }
 
-function mapClearToOutput(sourceIndex, outputType) {
-    const messages = [];
-
-    switch (outputType) {
-    case "SpatGRIS":
+function cartesianToSPAT(idx, x, y, z, hspan, vspan) {
+    const messages = [{
+        address: `/source/${idx}/xyz`,
+        value: [x, y, z]
+    }];
+    if (hspan !== undefined && vspan !== undefined) {
         messages.push({
-            address: `/${sourceIndex}/x`,
-            value: 0
+            address: `/source/${idx}/spread`,
+            value: (hspan + vspan) / 2 * 100
         });
-        messages.push({
-            address: `/${sourceIndex}/y`,
-            value: 0
-        });
-        messages.push({
-            address: `/${sourceIndex}/z`,
-            value: 0
-        });
-        break;
-    case "ADM-OSC":
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/x`,
-            value: 0
-        });
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/y`,
-            value: 0
-        });
-        messages.push({
-            address: `/adm/obj/${sourceIndex}/z`,
-            value: 0
-        });
-        break;
-    case "SPAT Revolution":
-        messages.push({
-            address: `/source/${sourceIndex}/xyz`,
-            value: [0, 0, 0]
-        });
-        break;
     }
-
     return messages;
 }
 
-function mapAlgorithmToOutput(sourceIndex, algorithm, outputType) {
-    const messages = [];
-
-    switch (outputType) {
-    case "SpatGRIS":
-        // SpatGRIS might use a different format for algorithm selection
-        messages.push({
-            address: `/${sourceIndex}/algorithm`,
-            value: algorithm
-        });
-        break;
-    case "ADM-OSC":
-        // ADM doesn't typically have algorithm selection
-        break;
-    case "SPAT Revolution":
-        // SPAT has different spatialization modes
-        const spatMode = algorithm === "dome" ? "dome" : "panning";
-        messages.push({
-            address: `/source/${sourceIndex}/mode`,
-            value: spatMode
-        });
-        break;
+// ----- Output device lifecycle -----
+// Each output device is backed by a raw outbound UDP socket.
+// We format OSC entirely in JS (mapForXxx above) and hand the
+// result to udp.osc(addr, values).
+function openOutputSocket(dev) {
+    if (dev.udp) {
+        try { dev.udp.close(); } catch (e) {}
+        dev.udp = null;
     }
-
-    return messages;
-}
-
-function typeToFormat(type) {
-    switch (type) {
-    case "SpatGRIS":
-        return 0;
-    case "ADM-OSC":
-        return 1;
-    case "SPAT Revolution":
-        return 2;
-    default:
-        return 1;
+    try {
+        dev.udp = Protocols.outboundUDP({
+            Transport: { Host: dev.host, Port: dev.port },
+            onError: function() {
+                console.log("Output socket error on", dev.name, dev.host + ":" + dev.port);
+            }
+        });
+    } catch (e) {
+        console.log("Failed to open outbound UDP to", dev.host, dev.port, e);
+        dev.udp = null;
     }
 }
 
 function createOutputDevice(name, host, port, type) {
-    Score.removeDevice(name);
-    Score.createDevice(name, "b96e0e26-c932-40a4-9640-782bf357840e", {
-        "Host": host,
-        "Port": port,
-        "InputPort": 0,
-        "Sources": 128,
-        "Format": typeToFormat(type),
-        "Programs": 1
-    });
-
-    outputDevices.push({
+    const dev = {
         name: name,
         host: host,
         port: port,
         type: type,
         active: true,
-        sourceIndexOffset: 0
-    });
-
+        sourceIndexOffset: 0,
+        udp: null
+    };
+    openOutputSocket(dev);
+    outputDevices.push(dev);
     updateOutputList();
     saveOutputDevices();
 }
 
 function removeOutputDevice(index) {
     if (index >= 0 && index < outputDevices.length) {
-        Score.removeDevice(outputDevices[index].name);
+        const dev = outputDevices[index];
+        if (dev.udp) {
+            try { dev.udp.close(); } catch (e) {}
+            dev.udp = null;
+        }
         outputDevices.splice(index, 1);
         updateOutputList();
         saveOutputDevices();
@@ -440,7 +329,16 @@ function removeOutputDevice(index) {
 function updateOutputList() {
     outputListModel.clear();
     for (let output of outputDevices) {
-        outputListModel.append(output);
+        // Only expose display fields — the `udp` socket is a QObject
+        // and doesn't belong in the ListModel.
+        outputListModel.append({
+            name: output.name,
+            host: output.host,
+            port: output.port,
+            type: output.type,
+            active: output.active,
+            sourceIndexOffset: output.sourceIndexOffset || 0
+        });
     }
 }
 
