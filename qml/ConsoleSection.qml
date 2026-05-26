@@ -99,7 +99,7 @@ GroupBox {
             }
 
             Label {
-                text: "Rate limit (milliseconds):"
+                text: "Max display rate (msg/s):"
                 color: "#ffffff"
                 verticalAlignment: Text.AlignVCenter
                 font.pointSize: skin.fontMedium
@@ -107,20 +107,20 @@ GroupBox {
 
             SpinBox {
                 id: rateLimitField
-                readonly property int rateLow: 5
-                readonly property int rateHigh: 1000
+                readonly property int rateLow: 10
+                readonly property int rateHigh: 10000
                 Layout.preferredWidth: 120
-                value: Math.max(Math.min(Math.abs(1000 * appSettings.monitorInterval), rateHigh), rateLow)
-                //textColor: acceptableInput ? "#fff" : "#f00"
+                value: Math.max(Math.min(appSettings.monitorMaxRate, rateHigh), rateLow)
                 font.pointSize: skin.fontMedium
                 editable: true
                 live: false
-                from: 5
-                to: 1000
+                from: rateLow
+                to: rateHigh
+                stepSize: 50
                 wrap: false
                 validator: IntValidator {
-                    bottom: 5
-                    top: 1000
+                    bottom: rateLimitField.rateLow
+                    top: rateLimitField.rateHigh
                 }
                 background: Rectangle {
                     color: "#3a3a3a"
@@ -140,9 +140,8 @@ GroupBox {
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
                 }
                 onValueChanged: {
-                    const interval_ms = value;
-                    if(interval_ms >= 5 && interval_ms <= 1000) {
-                        appSettings.monitorInterval = interval_ms / 1000.;
+                    if (value >= rateLow && value <= rateHigh) {
+                        appSettings.monitorMaxRate = value;
                     }
                 }
             }
@@ -155,7 +154,7 @@ GroupBox {
                 text: "Clear"
                 Layout.preferredWidth: 60
                 Layout.preferredHeight: 22
-                onClicked: messageMonitor.clear()
+                onClicked: window.clearLog()
 
                 background: Rectangle {
                     color: parent.hovered ? "#5a5a5a" : "#4a4a4a"
