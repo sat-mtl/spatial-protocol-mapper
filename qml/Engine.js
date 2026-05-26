@@ -1,3 +1,5 @@
+.import "LogQueue.js" as LogQueue
+
 function restoreSavedSettings() {
     inputPortField.text = appSettings.listenPort;
 
@@ -36,36 +38,49 @@ function saveOutputDevices() {
     appSettings.savedOutputDevices = JSON.stringify(toSave);
 }
 
-var g_lastInputLogTimestamp = 0;
-var g_lastOutputLogTimestamp = 0;
-function rateLimitInputLog()
-{
-    const ts = Util.timestamp();
-    if((ts - g_lastInputLogTimestamp) < appSettings.monitorInterval)
-      return false;
-    g_lastInputLogTimestamp = ts;
-    return true;
-}
-function rateLimitOutputLog()
-{
-    const ts = Util.timestamp();
-    if((ts - g_lastOutputLogTimestamp) < appSettings.monitorInterval)
-      return false;
-    g_lastOutputLogTimestamp = ts;
-    return true;
-}
+var VIEW_MAX_LINES = 1000;
+var FLUSH_HZ = 60;
+var g_drainBudget = 0;
 
-function logMessage(message) {
-    messageMonitor.append(message);
-    // Update monitor
-    if (messageMonitor.lineCount > 15) {
-        messageMonitor.remove(0, messageMonitor.text.indexOf('\n') + 1);
+function flushLogs() {
+    var perTick = appSettings.monitorMaxRate / FLUSH_HZ;
+    // Floor cap at 1: low rates have perTick < 0.5 so 2*perTick would never
+    // reach a whole line and Math.floor(budget) would stick at 0.
+    var cap = Math.max(1, perTick * 2);
+    g_drainBudget = Math.min(g_drainBudget + perTick, cap);
+
+    if (!LogQueue.hasWork()) return;
+
+    var n = Math.floor(g_drainBudget);
+    if (n <= 0) return;
+
+    var lines = LogQueue.drainUpTo(n);
+    if (lines.length === 0) return;
+    g_drainBudget -= lines.length;
+
+    messageMonitor.append(lines.join('\n'));
+
+    var excess = messageMonitor.lineCount - VIEW_MAX_LINES;
+    if (excess > 0) {
+        var t = messageMonitor.text;
+        var idx = -1;
+        for (var j = 0; j < excess; j++) {
+            idx = t.indexOf('\n', idx + 1);
+            if (idx < 0) break;
+        }
+        if (idx >= 0) messageMonitor.remove(0, idx + 1);
     }
 }
 
+function clearLogs() {
+    LogQueue.clear();
+    g_drainBudget = 0;
+    messageMonitor.clear();
+}
+
 function onInputValueReceived(address, value) {
-    if (appSettings.logReceivedMessages && messageMonitor.visible && rateLimitInputLog()) {
-        logMessage(`IN: ${address} = ${JSON.stringify(value)}`);
+    if (appSettings.logReceivedMessages && messageMonitor.visible) {
+        LogQueue.pushInput(`IN: ${address} = ${JSON.stringify(value)}`);
     }
 
     // Normalize the incoming message to an internal SpatGRIS-style form:
@@ -100,8 +115,8 @@ function onInputValueReceived(address, value) {
                 // wrap scalar values so "/a/b" with value 0 doesn't crash.
                 const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
                 output.udp.osc(msg.address, oscArgs);
-                if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
-                    logMessage(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
+                if (appSettings.logSentMessages && messageMonitor.visible) {
+                    LogQueue.pushOutput(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
                 }
             }
         }
@@ -136,8 +151,8 @@ function forwardAdmRaw(address, value) {
         }
 
         output.udp.osc(outAddress, oscArgs);
-        if (appSettings.logSentMessages && messageMonitor.visible && rateLimitOutputLog()) {
-            logMessage(`OUT: ${output.name} ${outAddress} = ${JSON.stringify(value)}`);
+        if (appSettings.logSentMessages && messageMonitor.visible) {
+            LogQueue.pushOutput(`OUT: ${output.name} ${outAddress} = ${JSON.stringify(value)}`);
         }
     }
 }
