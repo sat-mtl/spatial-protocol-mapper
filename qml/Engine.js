@@ -143,6 +143,7 @@ function forwardAdmRaw(address, value) {
 }
 
 // ----- Input parsing: /spat/serv -----
+const HALF_PI = Math.PI / 2.;
 function parseSpatGRISInput(value) {
     if (!value || value.length < 2) return null;
 
@@ -152,8 +153,8 @@ function parseSpatGRISInput(value) {
         if (value.length < 7) return null;
         return {
             command: "pol",
-            sourceIndex: value[0],
-            args: [value[1], value[2], value[5], value[3], value[4]]
+            sourceIndex: 1+value[0],
+            args: [value[1], HALF_PI - value[2], value[5], value[3] / 2., value[4] * 2.]
         };
     }
     return {
