@@ -11,7 +11,7 @@ ApplicationWindow {
     visible: true
     width: 800
     height: 600
-    title: "OSC Spatialization Router"
+    title: "Spatial Protocol Mapper"
     color: "#1e1e1e"
     font: style.fontSans
     property alias skin: style
