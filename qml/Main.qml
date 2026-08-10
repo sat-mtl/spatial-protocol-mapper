@@ -24,7 +24,7 @@ ApplicationWindow {
         property bool logReceivedMessages: true
         property bool logSentMessages: false
         property bool monitorVisible: false
-        property real monitorInterval: 0.015 // in seconds
+        property int monitorMaxRate: 500 // max log lines per second displayed
         property string savedOutputDevices: "[]"
     }
 
@@ -49,6 +49,18 @@ ApplicationWindow {
         Engine.restoreSavedSettings();
 
         Engine.createInputDevice(appSettings.listenPort);
+    }
+
+    Timer {
+        id: logFlushTimer
+        interval: 16
+        running: appSettings.monitorVisible
+        repeat: true
+        onTriggered: Engine.flushLogs()
+    }
+
+    function clearLog() {
+        Engine.clearLogs();
     }
 
     header: Item {
