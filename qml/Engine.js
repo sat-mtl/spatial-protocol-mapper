@@ -92,7 +92,7 @@ function onInputValueReceived(address, value) {
             if (!output.active || !output.udp) continue;
 
             const idx = norm.sourceIndex + (output.sourceIndexOffset || 0);
-            const mapped = mapMessage(norm.command, idx, norm.args, output.type);
+            const mapped = mapMessage(norm.command, idx, norm.args, output.type, norm);
             if (!mapped || mapped.length === 0) continue;
 
             for (let msg of mapped) {
@@ -151,10 +151,18 @@ function parseSpatGRISInput(value) {
         // Legacy format: [sourceIndex, az, el, hspan, vspan, radius, reserved]
         // Polar in radians; rewrite to canonical "pol" shape.
         if (value.length < 7) return null;
+        // Keep the original payload: SpatGRIS routes the legacy form through a
+        // *cylindrical* LegacyLbapPosition::toPosition() in Cube/MBAP mode, but
+        // routes "pol" through a *spherical* conversion. Rewriting legacy to
+        // "pol" therefore moves the source (az=0, colat=pi/4, dist=1 lands at
+        // (0,0.707,0.707) instead of (0,1,0.5)). Outputs that speak /spat/serv
+        // natively re-emit `legacyArgs` unchanged; every other output uses the
+        // normalized "pol" form below, which is correct for them.
         return {
             command: "pol",
             sourceIndex: 1+value[0],
-            args: [value[1], HALF_PI - value[2], value[5], value[3] / 2., value[4] * 2.]
+            args: [value[1], HALF_PI - value[2], value[5], value[3] / 2., value[4] * 2.],
+            legacyArgs: value.slice(1)
         };
     }
     return {
@@ -268,9 +276,9 @@ function parseADMInput(address, value) {
     }
 }
 
-function mapMessage(command, idx, args, outputType) {
+function mapMessage(command, idx, args, outputType, norm) {
     switch (outputType) {
-    case "SpatGRIS":       return mapForSpatGRIS(command, idx, args);
+    case "SpatGRIS":       return mapForSpatGRIS(command, idx, args, norm);
     case "ADM-OSC":        return mapForADM(command, idx, args);
     case "SPAT Revolution": return mapForSPAT(command, idx, args);
     }
@@ -281,7 +289,15 @@ function mapMessage(command, idx, args, outputType) {
 // The SpatGRIS server speaks /spat/serv natively, so we re-emit the
 // command with the exact coordinate system we received. No lossy
 // polar<->cartesian round-trip.
-function mapForSpatGRIS(command, idx, args) {
+function mapForSpatGRIS(command, idx, args, norm) {
+    // A legacy-form input goes back out in the legacy form, untouched.
+    // idx is 1-based (+ any per-output offset); the legacy wire form is 0-based.
+    if (norm && norm.legacyArgs) {
+        return [{
+            address: "/spat/serv",
+            value: [idx - 1].concat(norm.legacyArgs)
+        }];
+    }
     switch (command) {
     case "pol":
     case "deg":
@@ -298,6 +314,12 @@ function mapForSpatGRIS(command, idx, args) {
         // alg idx <dome|cube>
         return [{ address: "/spat/serv", value: ["alg", idx, args[0]] }];
     }
+    // SpatGRIS speaks /spat/serv natively and supports commands we do not
+    // model (e.g. "reset <id>", sg_OscInput.cpp:186-193). Forward anything we did
+    // not recognise rather than dropping it on the floor.
+    if (typeof command === "string" && command.length > 0) {
+        return [{ address: "/spat/serv", value: [command, idx].concat(args) }];
+    }
     return [];
 }
 
@@ -308,10 +330,13 @@ function mapForSpatGRIS(command, idx, args) {
 //     ADM uses +90° = left / −90° = right. → sign flipped.
 //   - Elevation: both use 0° = horizon, +90° = above. → no change.
 //   - Cartesian axes match: x = L/R, y = B/F, z = D/U with same signs.
-// Ranges differ (SpatGRIS radius ∈ [−3, 3], xyz ∈ [−1.66, 1.66];
-// ADM dist ∈ [0, 1], xyz ∈ [−1, 1]). Per ADM-OSC §9 receivers must clamp,
-// so we pass values through unchanged rather than impose a scaling that
-// would change the physical position.
+// Ranges differ: SpatGRIS cartesian is the MBAP extended field
+// (±MBAP_EXTENDED_RADIUS = ±1.6666667, sg_constants.hpp:71) while ADM-OSC
+// cartesian is normalized ±1. Relying on the receiver to clamp (ADM-OSC §9)
+// is NOT position-preserving: every source beyond 60% of full-scale collapses
+// onto the wall, silently discarding the outer 40% of the field. We therefore
+// scale the axes into ADM's normalized range. Polar radius is left alone: it
+// is a distance, not a bounded axis, and ControlGris dome sources sit at ~1.
 // ADM has no vertical-extent address — vspan is dropped.
 // Packed /aed and /xyz are used per the spec's atomicity recommendation.
 function mapForADM(command, idx, args) {
@@ -354,10 +379,16 @@ function polarToADM(idx, azimuthRad, elevationRad, radius, hspan) {
     return messages;
 }
 
+// SpatGRIS MBAP_EXTENDED_RADIUS (sg_constants.hpp:71) -- the cartesian clamp
+// applied by CartesianVector::clampedToFarField (sg_CartesianVector.hpp:182-187).
+const MBAP_EXTENDED_RADIUS = 1.6666667;
+
 function cartesianToADM(idx, x, y, z, hspan) {
     const messages = [{
         address: `/adm/obj/${idx}/xyz`,
-        value: [x, y, z]
+        value: [x / MBAP_EXTENDED_RADIUS,
+                y / MBAP_EXTENDED_RADIUS,
+                z / MBAP_EXTENDED_RADIUS]
     }];
     if (hspan !== undefined) {
         messages.push({ address: `/adm/obj/${idx}/w`, value: hspan });
