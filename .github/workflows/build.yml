@@ -44,6 +44,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          # qml/ca/qc/sat/qmlcomponents is the shared SAT QML module.
+          submodules: recursive
 
       - name: ossia score build
         id: score
@@ -75,9 +78,9 @@ jobs:
           app-description: "Remap OSC"
           app-copyright: "Société des Arts Technologiques"
           app-version: "1.0"
-          app-png: "resources/logo.png"
-          app-ico: "resources/logo.ico"
-          app-icns: "resources/logo.icns"
+          app-png: "qml/spm/resources/images/logo.png"
+          app-ico: "qml/spm/resources/images/logo.ico"
+          app-icns: "qml/spm/resources/images/logo.icns"
           macos-certificate-base64: ${{ secrets.MAC_CERT_B64 }}
           macos-certificate-password: ${{ secrets.MAC_CERT_PASSWORD }}
           macos-notarize-team-id: ${{ secrets.MAC_NOTARIZE_TEAM_ID }}

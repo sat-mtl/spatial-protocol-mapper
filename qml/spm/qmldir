@@ -1,0 +1,10 @@
+module spm
+
+# Views (one per sidebar tab)
+RoutingView            Views/RoutingView.qml
+MonitorView            Views/MonitorView.qml
+
+# Presentation-only building blocks
+SectionHeader          Components/SectionHeader.qml
+OutputRow              Components/OutputRow.qml
+AccentButton           Components/AccentButton.qml
