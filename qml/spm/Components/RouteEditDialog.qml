@@ -4,34 +4,33 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Per-route source-id range editor. Shared by the basic view's output rows and
-// (later) the matrix cells, so a range means the same thing wherever it is set.
+// Per-route editor: source range and index offset. Shared by the basic view's
+// output rows and the matrix cells, so a route means the same thing wherever
+// it is set.
 //
-// The filter tests the *incoming* source index, before the route's offset is
-// applied — the numbers here are the ones on the sender, not on the receiver.
+// The range tests the *incoming* source index, before the offset is applied —
+// the numbers here are the ones on the sender, not on the receiver.
 //
-// -1 on either bound means unbounded; `rangeAccepted` reports the same.
+// -1 on either bound means unbounded; `routeEdited` reports the same.
 Dialog {
     id: root
 
     property string routeLabel: ""
-    property int srcMin: -1
-    property int srcMax: -1
 
-    signal rangeAccepted(int min, int max)
+    signal routeEdited(int offset, int min, int max)
 
-    title: "Source range"
+    title: "Route"
     modal: true
     standardButtons: Dialog.Ok | Dialog.Cancel
     closePolicy: Popup.CloseOnEscape
 
     // Refusing is better than silently forwarding nothing: a route that can
-    // never match is indistinguishable from a broken one at the wire.
-    readonly property bool rangeValid: allSources.checked
-                                       || minBox.value <= maxBox.value
+    // never match looks exactly like a broken one at the wire.
+    readonly property bool rangeValid: allSources.checked || minBox.value <= maxBox.value
 
-    function editRoute(label, min, max) {
+    function editRoute(label, offset, min, max) {
         routeLabel = label;
+        offsetBox.value = offset;
         allSources.checked = (min < 0 && max < 0);
         minBox.value = (min < 0) ? 1 : min;
         maxBox.value = (max < 0) ? 128 : max;
@@ -40,9 +39,9 @@ Dialog {
 
     onAccepted: {
         if (allSources.checked)
-            rangeAccepted(-1, -1);
+            routeEdited(offsetBox.value, -1, -1);
         else
-            rangeAccepted(minBox.value, maxBox.value);
+            routeEdited(offsetBox.value, minBox.value, maxBox.value);
     }
 
     background: Rectangle {
@@ -53,7 +52,7 @@ Dialog {
     }
 
     header: CustomLabel {
-        text: root.routeLabel === "" ? root.title : root.title + " — " + root.routeLabel
+        text: root.routeLabel === "" ? root.title : root.routeLabel
         font.bold: true
         font.pixelSize: Theme.fontSizeSubtitle
         padding: Theme.padding
@@ -62,6 +61,27 @@ Dialog {
 
     ColumnLayout {
         spacing: Theme.spacing
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing
+
+            CustomLabel { text: "Source offset" }
+            Item { Layout.fillWidth: true }
+            CustomSpinBox {
+                id: offsetBox
+                Layout.preferredWidth: 150
+                from: 0
+                to: 9999
+                value: 0
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            height: 1
+            color: Theme.separatorColor
+        }
 
         CustomSwitch {
             id: allSources
@@ -96,7 +116,7 @@ Dialog {
         }
 
         CustomLabel {
-            Layout.preferredWidth: 300
+            Layout.preferredWidth: 320
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.fontSizeSmall
             color: root.rangeValid ? Theme.textColorSecondary : Theme.errorColor
@@ -104,12 +124,16 @@ Dialog {
                   ? "The first source must not be greater than the last."
                   : allSources.checked
                     ? "Every source on this input reaches this output."
-                    : "Sources outside this range are dropped for this output only. "
-                      + "The range is matched before the offset is applied."
+                    : "Sources outside this range are dropped for this route only. "
+                      + "The range is matched before the offset is applied, so "
+                      + "these are the numbers on the sender."
         }
     }
 
     // Keep OK unavailable rather than accepting a range that matches nothing.
-    onOpened: okButton().enabled = Qt.binding(function () { return root.rangeValid; })
-    function okButton() { return root.standardButton(Dialog.Ok); }
+    onOpened: {
+        const ok = root.standardButton(Dialog.Ok);
+        if (ok)
+            ok.enabled = Qt.binding(function () { return root.rangeValid; });
+    }
 }

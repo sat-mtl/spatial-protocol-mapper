@@ -14,13 +14,14 @@ Pane {
     padding: 0
     background: Rectangle { color: Theme.backgroundColor }
 
-    RouteRangeDialog {
-        id: rangeDialog
+    RouteEditDialog {
+        id: routeDialog
         parent: Overlay.overlay
         anchors.centerIn: parent
 
         property int outputId: -1
-        onRangeAccepted: (min, max) => root.controller.setRouteRange(outputId, min, max)
+        onRouteEdited: (offset, min, max) => root.controller.setRouteFor(
+                           root.controller.currentInputId, outputId, offset, min, max)
     }
 
     ColumnLayout {
@@ -41,9 +42,51 @@ Pane {
             hint: "positions received from ControlGRIS or an ADM-OSC sender"
         }
 
+        // One tab per input. The whole row collapses while there is only one,
+        // so the common case stays exactly as simple as it was.
+        TabBar {
+            id: inputTabs
+            Layout.fillWidth: true
+            visible: root.controller.inputListModel.count > 1
+            background: Rectangle { color: "transparent" }
+
+            onCurrentIndexChanged: root.controller.selectInputByIndex(currentIndex)
+
+            Repeater {
+                model: root.controller.inputListModel
+
+                CustomTabButton {
+                    required property var model
+                    text: model.name + "  ·  " + model.port
+                    implicitWidth: Math.max(140, implicitContentWidth + 2 * Theme.padding)
+                }
+            }
+        }
+
+        // TabBar writes its own currentIndex on click, which would break a
+        // plain binding; a Binding element re-applies it after the fact.
+        Binding {
+            target: inputTabs
+            property: "currentIndex"
+            value: root.controller.currentInputIndex
+            restoreMode: Binding.RestoreNone
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing
+
+            CustomLabel {
+                text: "Name"
+                visible: root.controller.inputListModel.count > 1
+            }
+
+            CustomTextField {
+                Layout.preferredWidth: 140
+                visible: root.controller.inputListModel.count > 1
+                text: root.controller.currentInputName
+                onEditingFinished: root.controller.setInputName(text)
+            }
 
             CustomLabel { text: "Listen port" }
 
@@ -74,14 +117,39 @@ Pane {
             }
 
             CustomLabel {
-                text: root.controller.currentInputError
-                visible: root.controller.currentInputError !== ""
+                readonly property string message:
+                    root.controller.currentInputError !== ""
+                    ? root.controller.currentInputError
+                    : root.controller.inputActionError
+                text: message
+                visible: message !== ""
                 color: Theme.errorColor
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
 
-            Item { Layout.fillWidth: root.controller.currentInputError === "" }
+            Item {
+                Layout.fillWidth: root.controller.currentInputError === ""
+                                  && root.controller.inputActionError === ""
+            }
+
+            AccentButton {
+                Layout.preferredWidth: 110
+                text: "+ Input"
+                onClicked: root.controller.inputActionError = root.controller.addInput()
+            }
+
+            AccentButton {
+                Layout.preferredWidth: 110
+                text: "− Input"
+                variant: "danger"
+                enabled: root.controller.inputListModel.count > 1
+                opacity: enabled ? 1.0 : 0.4
+                onClicked: {
+                    root.controller.inputActionError = "";
+                    root.controller.removeCurrentInput();
+                }
+            }
         }
 
         // ---- Outputs -------------------------------------------------- //
@@ -220,8 +288,10 @@ Pane {
                         onOffsetEdited: value => root.controller.setRouteOffset(model.outputId, value)
                         onRemoveRequested: root.controller.removeOutput(model.outputId)
                         onRangeEditRequested: {
-                            rangeDialog.outputId = model.outputId;
-                            rangeDialog.editRoute(model.name, model.srcMin, model.srcMax);
+                            routeDialog.outputId = model.outputId;
+                            routeDialog.editRoute(
+                                root.controller.currentInputName + "  →  " + model.name,
+                                model.sourceOffset, model.srcMin, model.srcMax);
                         }
                     }
                 }

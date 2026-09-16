@@ -90,11 +90,18 @@ ApplicationWindow {
     property alias inputListModel: inputListModel
     property alias outputListModel: outputListModel
     property alias routeListModel: routeListModel
+    property alias matrixModel: matrixModel
 
     ListModel { id: inputListModel }
     ListModel { id: outputListModel }
     // One row per output, describing the current input's route to it.
     ListModel { id: routeListModel }
+    // inputs x outputs, row-major, for the matrix grid.
+    ListModel { id: matrixModel }
+
+    // Non-empty when two enabled routes write the same source index on some
+    // output; shown as a banner under the matrix.
+    property string collisionSummary: ""
 
     property alias messageMonitor: monitorView.messageMonitor
 
@@ -106,6 +113,7 @@ ApplicationWindow {
     // The basic view edits one input at a time. These mirror it as bindable
     // properties, because the engine's state is plain JS with no notifiers.
     property int currentInputId: -1
+    property int currentInputIndex: 0
     property string currentInputName: ""
     property string currentInputProtocol: "Auto"
     property int currentInputPort: 18032
@@ -113,6 +121,9 @@ ApplicationWindow {
     property bool currentInputListening: false
     property string currentInputError: ""
     property string outputError: ""
+    // Reported by the input row; a failed addInput() must not surface down in
+    // the outputs section.
+    property string inputActionError: ""
 
     function syncCurrentInput() {
         if (currentInputId < 0 && inputs.length > 0)
@@ -126,6 +137,8 @@ ApplicationWindow {
             }
             return;
         }
+        for (let i = 0; i < inputs.length; i++)
+            if (inputs[i].id === currentInputId) { currentInputIndex = i; break; }
         currentInputName = inp.name;
         currentInputProtocol = inp.protocol;
         currentInputPort = inp.port;
@@ -142,9 +155,36 @@ ApplicationWindow {
 
     // Everything that can change what the views show, in one place.
     function refresh() {
+        Engine.updateInputList();
         Engine.updateOutputList();
         Engine.updateRouteList(currentInputId);
+        Engine.updateMatrixList();
+        collisionSummary = buildCollisionSummary();
         syncCurrentInput();
+    }
+
+    function buildCollisionSummary() {
+        const clashing = [];
+        for (let out of outputs) {
+            const cov = Engine.outputCoverage(out.id);
+            if (cov.collision)
+                clashing.push(out.name + " (" + cov.text + ")");
+        }
+        if (clashing.length === 0)
+            return "";
+        return "Two or more routes write the same source index on: "
+             + clashing.join(", ")
+             + ". The later message wins, so one sender will overwrite the other.";
+    }
+
+    function inputNameOf(id) {
+        const inp = Engine.findInput(id);
+        return inp ? inp.name : "";
+    }
+
+    function outputNameOf(id) {
+        const out = Engine.findOutput(id);
+        return out ? out.name : "";
     }
 
     // ---- Controller facade ---------------------------------------------- //
@@ -161,6 +201,51 @@ ApplicationWindow {
 
     function setListening(listening) {
         Engine.setInputListening(currentInputId, listening);
+        refresh();
+    }
+
+    function setInputName(name) {
+        Engine.setInputName(currentInputId, name);
+        refresh();
+    }
+
+    function selectInputByIndex(index) {
+        if (index >= 0 && index < inputs.length)
+            selectInput(inputs[index].id);
+    }
+
+    // Returns "" on success, or the reason it was refused. With no port, takes
+    // the next free one above those in use, so adding an input is one click.
+    function addInput(port) {
+        let portNum = parseInt(port);
+        if (isNaN(portNum)) {
+            portNum = 18032;
+            for (let i of inputs)
+                portNum = Math.max(portNum, i.port);
+            portNum += 1;
+            while (portNum < 65535 && Engine.portInUse(portNum, -1))
+                portNum++;
+        }
+        if (portNum < 1 || portNum > 65535)
+            return "Port must be between 1 and 65535";
+        // Two inputs on one port means the second bind fails at the OS level
+        // and the app shows a device that never receives anything.
+        if (Engine.portInUse(portNum, -1))
+            return "Port " + portNum + " is already used by another input";
+
+        const inp = Engine.createInput("Input " + (inputs.length + 1), portNum, "Auto");
+        Engine.saveConfiguration();
+        selectInput(inp.id);
+        refresh();
+        return "";
+    }
+
+    function removeCurrentInput() {
+        // The engine always has somewhere to route from.
+        if (inputs.length <= 1)
+            return;
+        Engine.removeInput(currentInputId);
+        currentInputId = inputs.length > 0 ? inputs[0].id : -1;
         refresh();
     }
 
@@ -221,13 +306,57 @@ ApplicationWindow {
         refresh();
     }
 
+    // ---- Matrix-addressed edits (explicit input, not the selected one) ---- //
+
+    function setRouteEnabledFor(inputId, outputId, enabled) {
+        Engine.setRoute(inputId, outputId, { enabled: enabled });
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    // -1 on either bound means "every source".
+    function setRouteFor(inputId, outputId, offset, min, max) {
+        Engine.setRoute(inputId, outputId, {
+            sourceOffset: offset,
+            srcMin: (min < 0) ? null : min,
+            srcMax: (max < 0) ? null : max
+        });
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    // Toggling a whole line flips it to whatever it mostly is not, so one
+    // click clears a full row and a second click fills it.
+    function toggleRow(inputId) {
+        let on = 0;
+        for (let out of outputs) {
+            const r = Engine.findRoute(inputId, out.id);
+            if (r && r.enabled) on++;
+        }
+        Engine.setRowEnabled(inputId, on < outputs.length);
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    function toggleColumn(outputId) {
+        let on = 0;
+        for (let inp of inputs) {
+            const r = Engine.findRoute(inp.id, outputId);
+            if (r && r.enabled) on++;
+        }
+        Engine.setColumnEnabled(outputId, on < inputs.length);
+        Engine.saveConfiguration();
+        refresh();
+    }
+
     function clearLog() {
         Engine.clearLogs();
     }
 
     // ---- Views ----------------------------------------------------------- //
     readonly property int routingViewIndex: 0
-    readonly property int monitorViewIndex: 1
+    readonly property int matrixViewIndex: 1
+    readonly property int monitorViewIndex: 2
     property int currentViewIndex: appSettings.lastViewIndex
     onCurrentViewIndexChanged: appSettings.lastViewIndex = currentViewIndex
 
@@ -302,6 +431,14 @@ ApplicationWindow {
                 }
 
                 CustomButton {
+                    text: "EXPERT"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing
+                    isActive: window.currentViewIndex === window.matrixViewIndex
+                    onClicked: window.currentViewIndex = window.matrixViewIndex
+                }
+
+                CustomButton {
                     text: "MONITOR"
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing
@@ -319,6 +456,7 @@ ApplicationWindow {
             currentIndex: window.currentViewIndex
 
             RoutingView { controller: window }
+            MatrixView { controller: window }
             MonitorView { id: monitorView; controller: window }
         }
     }
