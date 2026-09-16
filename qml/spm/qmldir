@@ -8,3 +8,4 @@ MonitorView            Views/MonitorView.qml
 SectionHeader          Components/SectionHeader.qml
 OutputRow              Components/OutputRow.qml
 AccentButton           Components/AccentButton.qml
+RouteRangeDialog       Components/RouteRangeDialog.qml

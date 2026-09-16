@@ -3,9 +3,9 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// One output device in the list. Presentation only — it reports intent through
-// signals and never touches the engine, so the same row serves the basic view
-// and (later) the per-input tabs.
+// One output device as seen from a given input: the route to it (on/off,
+// offset, source range) plus the device's own identity. Presentation only —
+// it reports intent through signals and never touches the engine.
 Rectangle {
     id: root
 
@@ -13,15 +13,27 @@ Rectangle {
     property string host: ""
     property int port: 0
     property string protocol: ""
-    property bool active: true
+    property bool routed: true
     property int sourceOffset: 0
+    // -1 on either bound means every source.
+    property int srcMin: -1
+    property int srcMax: -1
+    // Names of the other inputs feeding this output, empty when it is only fed
+    // from here. Without it, unrouting on this tab looks like it did nothing.
+    property string alsoFedBy: ""
 
-    signal activeToggled(bool value)
+    readonly property bool rangeIsAll: srcMin < 0 && srcMax < 0
+    readonly property string rangeText:
+        rangeIsAll ? "all sources"
+                   : (srcMin < 0 ? "1" : srcMin) + "–" + (srcMax < 0 ? "∞" : srcMax)
+
+    signal routedToggled(bool value)
     signal offsetEdited(int value)
+    signal rangeEditRequested
     signal removeRequested
 
     implicitHeight: 52
-    color: root.active ? Theme.backgroundColorTertiary : Theme.backgroundColorSecondary
+    color: root.routed ? Theme.backgroundColorTertiary : Theme.backgroundColorSecondary
     border.color: Theme.borderColor
     border.width: 1
     radius: Theme.borderRadius
@@ -33,22 +45,36 @@ Rectangle {
         spacing: Theme.spacing
 
         CustomSwitch {
-            checked: root.active
-            onToggled: root.activeToggled(checked)
+            checked: root.routed
+            onToggled: root.routedToggled(checked)
         }
 
-        CustomLabel {
-            text: root.name
-            font.bold: true
-            Layout.preferredWidth: 140
-            elide: Text.ElideRight
+        ColumnLayout {
+            Layout.preferredWidth: 150
+            spacing: 0
+
+            CustomLabel {
+                text: root.name
+                font.bold: true
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+            }
+
+            CustomLabel {
+                visible: root.alsoFedBy !== ""
+                text: "also fed by " + root.alsoFedBy
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeSmall
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+            }
         }
 
         CustomLabel {
             text: root.protocol
             color: Theme.primaryColor
             font.pixelSize: Theme.fontSizeSmall
-            Layout.preferredWidth: 120
+            Layout.preferredWidth: 115
             elide: Text.ElideRight
         }
 
@@ -61,20 +87,36 @@ Rectangle {
         }
 
         CustomLabel {
-            text: "Source offset"
+            text: "Sources"
+            color: Theme.textColorSecondary
+            font.pixelSize: Theme.fontSizeSmall
+        }
+
+        CustomButton {
+            Layout.preferredWidth: 110
+            height: Theme.buttonHeight
+            text: root.rangeText
+            // A narrowed range is a real routing decision; make it legible at
+            // a glance rather than hiding it behind the dialog.
+            isActive: !root.rangeIsAll
+            enabled: root.routed
+            opacity: enabled ? 1.0 : 0.4
+            onClicked: root.rangeEditRequested()
+        }
+
+        CustomLabel {
+            text: "Offset"
             color: Theme.textColorSecondary
             font.pixelSize: Theme.fontSizeSmall
         }
 
         CustomSpinBox {
-            id: offsetBox
-            Layout.preferredWidth: 110
+            Layout.preferredWidth: 105
             from: 0
             to: 9999
             value: root.sourceOffset
-            // `live: false` would defer to editingFinished; the list is small
-            // enough that committing per step keeps the wire in sync with what
-            // is on screen.
+            enabled: root.routed
+            opacity: enabled ? 1.0 : 0.4
             onValueModified: root.offsetEdited(value)
         }
 

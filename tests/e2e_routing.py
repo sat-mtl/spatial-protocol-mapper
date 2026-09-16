@@ -4,10 +4,11 @@
 """
 End-to-end routing test: drives the real app over UDP.
 
-tst_engine.qml covers the conversion table as pure functions. This covers the
-part it cannot reach — the input socket, the OSC parser, per-output sockets and
-the source-index offset — by seeding a known configuration, launching the app,
-sending OSC at the listen port and asserting on what comes out the other side.
+tst_engine.qml covers the conversion table and the route predicates as pure
+functions. This covers what it cannot reach — the input sockets, the OSC
+parser, per-output sockets, the dispatch index, and the settings migration —
+by seeding a known configuration, launching the app, sending OSC at a listen
+port and asserting on what comes out the other side.
 
 Not part of CI: it needs a built ossia-score (see ./test.sh). Run it locally
 before and after touching the routing engine.
@@ -20,7 +21,6 @@ Exits non-zero on the first failed expectation.
 import json
 import os
 import re
-import shutil
 import socket
 import struct
 import subprocess
@@ -30,9 +30,13 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONF = os.path.expanduser("~/.config/ossia/score.conf")
-LISTEN_PORT = 18032
-SPATGRIS_PORT = 19001
-ADM_PORT = 19002
+
+PORT_A = 18032          # first input
+PORT_B = 18033          # second input, for the isolation checks
+SINK_SPATGRIS = 19001   # every source
+SINK_ADM = 19002        # every source, offset +16
+SINK_RANGED = 19003     # sources 1..8 only
+SINK_FROM_B = 19004     # fed from the second input only
 ADM_OFFSET = 16
 
 
@@ -82,7 +86,7 @@ def osc_decode(data: bytes):
             args.append(True)
         elif t == "F":
             args.append(False)
-        elif t in "d":
+        elif t == "d":
             args.append(round(struct.unpack_from(">d", data, off)[0], 4)); off += 8
         else:
             break
@@ -114,48 +118,108 @@ class Sink(threading.Thread):
                 break
             self.messages.append(osc_decode(data))
 
+    def addresses(self):
+        return [a for a, _ in self.messages]
+
+    def find(self, address):
+        return [args for addr, args in self.messages if addr == address]
+
+    def clear(self):
+        self.messages.clear()
+
     def stop(self):
         self.running = False
         self.sock.close()
 
 
-def seed_settings():
-    """Point the app at our two sinks; returns the original file contents."""
-    original = open(CONF, encoding="utf-8").read() if os.path.exists(CONF) else None
+# An ini section runs to the next line that *starts* a section, not to the next
+# '[' anywhere -- the stored JSON contains plenty of those.
+SECTION_RE = re.compile(r"^\[OSCRouter\]\n(.*?)(?=^\[|\Z)", re.M | re.S)
 
-    outputs = [
-        {"name": "sg", "host": "127.0.0.1", "port": SPATGRIS_PORT,
-         "type": "SpatGRIS", "active": True, "sourceIndexOffset": 0},
-        {"name": "adm", "host": "127.0.0.1", "port": ADM_PORT,
-         "type": "ADM-OSC", "active": True, "sourceIndexOffset": ADM_OFFSET},
-    ]
-    # QSettings escapes the JSON string; mirror what the app writes back.
-    blob = json.dumps(outputs).replace("\\", "\\\\").replace('"', '\\"')
-    section = (
-        "[OSCRouter]\n"
+
+def write_section(body: str):
+    original = open(CONF, encoding="utf-8").read() if os.path.exists(CONF) else ""
+    section = "[OSCRouter]\n" + body
+    if "[OSCRouter]" in original:
+        text = re.sub(SECTION_RE, section, original, count=1)
+    else:
+        text = original.rstrip("\n") + "\n\n" + section
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    open(CONF, "w", encoding="utf-8").write(text)
+
+
+def read_section() -> str:
+    if not os.path.exists(CONF):
+        return ""
+    m = re.search(SECTION_RE, open(CONF, encoding="utf-8").read())
+    return m.group(1) if m else ""
+
+
+def quote(blob: str) -> str:
+    """QSettings escapes backslashes and quotes inside a quoted value."""
+    return '"' + blob.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def unquote(value: str) -> str:
+    return value.strip().strip('"').replace('\\"', '"').replace("\\\\", "\\")
+
+
+def seed_v2():
+    config = {
+        "version": 2,
+        "inputs": [
+            {"id": 1, "name": "A", "protocol": "Auto", "port": PORT_A, "enabled": True},
+            {"id": 2, "name": "B", "protocol": "Auto", "port": PORT_B, "enabled": True},
+        ],
+        "outputs": [
+            {"id": 10, "name": "sg", "protocol": "SpatGRIS",
+             "host": "127.0.0.1", "port": SINK_SPATGRIS},
+            {"id": 11, "name": "adm", "protocol": "ADM-OSC",
+             "host": "127.0.0.1", "port": SINK_ADM},
+            {"id": 12, "name": "ranged", "protocol": "SpatGRIS",
+             "host": "127.0.0.1", "port": SINK_RANGED},
+            {"id": 13, "name": "fromB", "protocol": "SpatGRIS",
+             "host": "127.0.0.1", "port": SINK_FROM_B},
+        ],
+        "routes": [
+            {"inputId": 1, "outputId": 10, "enabled": True,
+             "sourceOffset": 0, "srcMin": None, "srcMax": None},
+            {"inputId": 1, "outputId": 11, "enabled": True,
+             "sourceOffset": ADM_OFFSET, "srcMin": None, "srcMax": None},
+            {"inputId": 1, "outputId": 12, "enabled": True,
+             "sourceOffset": 0, "srcMin": 1, "srcMax": 8},
+            # Reached only from the second input, and disabled from the first:
+            # proves routes gate per input rather than per output.
+            {"inputId": 1, "outputId": 13, "enabled": False,
+             "sourceOffset": 0, "srcMin": None, "srcMax": None},
+            {"inputId": 2, "outputId": 13, "enabled": True,
+             "sourceOffset": 100, "srcMin": None, "srcMax": None},
+        ],
+    }
+    write_section(
         "lastViewIndex=0\n"
-        f"listenPort={LISTEN_PORT}\n"
         "logReceivedMessages=true\n"
         "logSentMessages=false\n"
         "monitorMaxRate=500\n"
-        f'savedOutputDevices="{blob}"\n'
+        f"savedConfiguration={quote(json.dumps(config))}\n"
     )
 
-    text = original or ""
-    if "[OSCRouter]" in text:
-        text = re.sub(r"\[OSCRouter\]\n(?:[^\[]*)", section, text, count=1)
-    else:
-        text = text.rstrip("\n") + "\n\n" + section
-    os.makedirs(os.path.dirname(CONF), exist_ok=True)
-    open(CONF, "w", encoding="utf-8").write(text)
-    return original
 
-
-def restore_settings(original):
-    if original is None:
-        os.path.exists(CONF) and os.remove(CONF)
-    else:
-        open(CONF, "w", encoding="utf-8").write(original)
+def seed_v1():
+    outputs = [
+        {"name": "legacy_a", "host": "127.0.0.1", "port": SINK_SPATGRIS,
+         "type": "SpatGRIS", "active": True, "sourceIndexOffset": 3},
+        {"name": "legacy_b", "host": "127.0.0.1", "port": SINK_ADM,
+         "type": "ADM-OSC", "active": False, "sourceIndexOffset": 0},
+    ]
+    write_section(
+        "lastViewIndex=0\n"
+        "logReceivedMessages=true\n"
+        "logSentMessages=false\n"
+        "monitorMaxRate=500\n"
+        f"listenPort={PORT_A}\n"
+        f"savedOutputDevices={quote(json.dumps(outputs))}\n"
+    )
 
 
 def port_is_bound(port):
@@ -170,23 +234,51 @@ def port_is_bound(port):
         probe.close()
 
 
+class App:
+    """Runs the real app for the duration of a block."""
+
+    def __enter__(self):
+        subprocess.run(["pkill", "-f", "ossia-score --ui qml/Main.qml"],
+                       capture_output=True)
+        time.sleep(1)
+        self.proc = subprocess.Popen([os.path.join(REPO, "test.sh")], cwd=REPO,
+                                     stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+        for _ in range(45):
+            time.sleep(1)
+            if port_is_bound(PORT_A):
+                break
+        else:
+            raise RuntimeError(f"the app never bound {PORT_A}")
+        time.sleep(3)  # output sockets and the second input
+        return self
+
+    def __exit__(self, *exc):
+        self.proc.terminate()
+        subprocess.run(["pkill", "-f", "ossia-score --ui qml/Main.qml"],
+                       capture_output=True)
+        time.sleep(2)  # let it write settings back
+        return False
+
+
+def send(port, address, args):
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    tx.sendto(osc_encode(address, args), ("127.0.0.1", port))
+    tx.close()
+    time.sleep(0.3)
+
+
 # ---------------------------------------------------------------- expectations
 
 FAILURES = []
 
 
 def expect(condition, description, detail=""):
-    if condition:
-        print(f"  PASS  {description}")
-    else:
-        print(f"  FAIL  {description}")
+    print(f"  {'PASS' if condition else 'FAIL'}  {description}")
+    if not condition:
         if detail:
             print(f"        {detail}")
         FAILURES.append(description)
-
-
-def find(messages, address):
-    return [args for addr, args in messages if addr == address]
 
 
 def close(actual, expected, tol=1e-3):
@@ -196,102 +288,165 @@ def close(actual, expected, tol=1e-3):
         for a, b in zip(actual, expected))
 
 
-def main():
-    subprocess.run(["pkill", "-f", "ossia-score --ui qml/Main.qml"],
-                   capture_output=True)
-    time.sleep(1)
+# ---------------------------------------------------------------- scenarios
 
-    original = seed_settings()
-    sinks = [Sink(SPATGRIS_PORT), Sink(ADM_PORT)]
-    for s in sinks:
+def test_routing():
+    print("\n=== routing, with a v2 configuration ===")
+    seed_v2()
+    sinks = {p: Sink(p) for p in
+             (SINK_SPATGRIS, SINK_ADM, SINK_RANGED, SINK_FROM_B)}
+    for s in sinks.values():
         s.start()
-
-    app = subprocess.Popen([os.path.join(REPO, "test.sh")], cwd=REPO,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        print(f"waiting for the app to bind {LISTEN_PORT} ...")
-        for _ in range(40):
-            time.sleep(1)
-            if port_is_bound(LISTEN_PORT):
-                break
-        else:
-            print("FAIL: the app never bound the listen port")
-            return 1
-        time.sleep(2)  # let the output sockets open too
+        with App():
+            # -- a source inside every range -----------------------------
+            print("\n/spat/serv deg 7 -90 0 1 0 0   -> input A")
+            send(PORT_A, "/spat/serv", ["deg", 7, -90.0, 0.0, 1.0, 0.0, 0.0])
 
-        tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sg = sinks[SINK_SPATGRIS].find("/spat/serv")
+            expect(len(sg) == 1, "unfiltered SpatGRIS output receives it",
+                   f"got {sinks[SINK_SPATGRIS].messages}")
+            if sg:
+                expect(close(sg[0], ["deg", 7, -90.0, 0.0, 1.0, 0.0, 0.0]),
+                       "payload passes through verbatim", f"got {sg[0]}")
 
-        def send(address, args):
-            tx.sendto(osc_encode(address, args), ("127.0.0.1", LISTEN_PORT))
-            time.sleep(0.25)
+            aed = sinks[SINK_ADM].find(f"/adm/obj/{7 + ADM_OFFSET}/aed")
+            expect(len(aed) == 1, "ADM output applies the route offset",
+                   f"got {sinks[SINK_ADM].addresses()}")
+            if aed:
+                expect(close(aed[0], [90.0, 0.0, 1.0]),
+                       "ADM azimuth sign is flipped", f"got {aed[0]}")
 
-        # --- a ControlGRIS source at the extreme left, in degrees ---------
-        print("\n/spat/serv deg 7 -90 0 1 0 0")
-        send("/spat/serv", ["deg", 7, -90.0, 0.0, 1.0, 0.0, 0.0])
+            expect(len(sinks[SINK_RANGED].find("/spat/serv")) == 1,
+                   "source 7 is inside the 1-8 range and is forwarded",
+                   f"got {sinks[SINK_RANGED].messages}")
 
-        sg = find(sinks[0].messages, "/spat/serv")
-        expect(len(sg) == 1, "SpatGRIS output receives one /spat/serv",
-               f"got {sinks[0].messages}")
-        if sg:
-            expect(close(sg[0], ["deg", 7, -90.0, 0.0, 1.0, 0.0, 0.0]),
-                   "SpatGRIS payload passes through verbatim", f"got {sg[0]}")
+            expect(not sinks[SINK_FROM_B].messages,
+                   "a disabled route does not forward",
+                   f"got {sinks[SINK_FROM_B].messages}")
 
-        aed = find(sinks[1].messages, f"/adm/obj/{7 + ADM_OFFSET}/aed")
-        expect(len(aed) == 1,
-               f"ADM output receives /adm/obj/{7 + ADM_OFFSET}/aed (offset applied)",
-               f"got {sinks[1].messages}")
-        if aed:
-            expect(close(aed[0], [90.0, 0.0, 1.0]),
-                   "ADM azimuth sign is flipped", f"got {aed[0]}")
+            # -- a source outside the ranged route ------------------------
+            print("\n/spat/serv deg 9 -45 0 1 0 0   -> input A")
+            for s in sinks.values():
+                s.clear()
+            send(PORT_A, "/spat/serv", ["deg", 9, -45.0, 0.0, 1.0, 0.0, 0.0])
 
-        # --- cartesian, checking the MBAP -> normalized scaling ------------
-        print("\n/spat/serv car 1 1.6666667 0 0 0 0")
-        for s in sinks:
-            s.messages.clear()
-        send("/spat/serv", ["car", 1, 1.6666667, 0.0, 0.0, 0.0, 0.0])
+            expect(len(sinks[SINK_SPATGRIS].find("/spat/serv")) == 1,
+                   "source 9 still reaches the unfiltered output")
+            expect(not sinks[SINK_RANGED].messages,
+                   "source 9 is outside 1-8 and is dropped for that route only",
+                   f"got {sinks[SINK_RANGED].messages}")
 
-        xyz = find(sinks[1].messages, f"/adm/obj/{1 + ADM_OFFSET}/xyz")
-        expect(len(xyz) == 1, "ADM output receives packed /xyz",
-               f"got {sinks[1].messages}")
-        if xyz:
-            expect(close(xyz[0], [1.0, 0.0, 0.0]),
-                   "full-scale MBAP x maps onto the ADM unit sphere", f"got {xyz[0]}")
+            # -- the range applies to the raw ADM passthrough too ---------
+            print("\n/adm/obj/9/gain 0.5 and /adm/obj/3/gain 0.5   -> input A")
+            for s in sinks.values():
+                s.clear()
+            send(PORT_A, "/adm/obj/3/gain", [0.5])
+            send(PORT_A, "/adm/obj/9/gain", [0.5])
 
-        # --- ADM input, exercising the other parser ------------------------
-        print("\n/adm/obj/3/aed 90 0 1")
-        for s in sinks:
-            s.messages.clear()
-        send("/adm/obj/3/aed", [90.0, 0.0, 1.0])
+            expect(sinks[SINK_ADM].find(f"/adm/obj/{3 + ADM_OFFSET}/gain"),
+                   "raw ADM parameters are forwarded with the offset applied",
+                   f"got {sinks[SINK_ADM].addresses()}")
+            expect(not sinks[SINK_SPATGRIS].messages,
+                   "raw ADM parameters do not reach a non-ADM output",
+                   f"got {sinks[SINK_SPATGRIS].messages}")
 
-        sg = find(sinks[0].messages, "/spat/serv")
-        expect(len(sg) == 1, "an ADM input reaches the SpatGRIS output",
-               f"got {sinks[0].messages}")
-        if sg:
-            expect(close(sg[0], ["deg", 3, -90.0, 0.0, 1.0, 0.0, 0.0]),
-                   "ADM azimuth is flipped into SpatGRIS convention", f"got {sg[0]}")
+            # -- the second input is independent ---------------------------
+            print("\n/spat/serv deg 1 0 0 1 0 0   -> input B")
+            for s in sinks.values():
+                s.clear()
+            send(PORT_B, "/spat/serv", ["deg", 1, 0.0, 0.0, 1.0, 0.0, 0.0])
 
-        # --- raw ADM passthrough, which carries its own offset logic -------
-        print("\n/adm/obj/3/gain 0.5  (untranslatable, forwarded raw)")
-        for s in sinks:
-            s.messages.clear()
-        send("/adm/obj/3/gain", [0.5])
+            b = sinks[SINK_FROM_B].find("/spat/serv")
+            expect(len(b) == 1, "input B reaches its own output",
+                   f"got {sinks[SINK_FROM_B].messages}")
+            if b:
+                expect(b[0][1] == 101, "input B applies its own +100 offset",
+                       f"got index {b[0][1]}")
+            expect(not sinks[SINK_SPATGRIS].messages,
+                   "input B does not leak into input A's outputs",
+                   f"got {sinks[SINK_SPATGRIS].messages}")
 
-        gain = find(sinks[1].messages, f"/adm/obj/{3 + ADM_OFFSET}/gain")
-        expect(len(gain) == 1,
-               "raw ADM parameters are forwarded with the offset applied",
-               f"got {sinks[1].messages}")
-        expect(not find(sinks[0].messages, "/spat/serv"),
-               "raw ADM parameters do not reach a non-ADM output",
-               f"got {sinks[0].messages}")
+            # -- per-input ADM accumulators --------------------------------
+            print("\n/adm/obj/1/xyz on both inputs, then /adm/obj/1/x on A")
+            for s in sinks.values():
+                s.clear()
+            send(PORT_A, "/adm/obj/1/xyz", [0.1, 0.2, 0.3])
+            send(PORT_B, "/adm/obj/1/xyz", [0.6, 0.7, 0.8])
+            for s in sinks.values():
+                s.clear()
+            send(PORT_A, "/adm/obj/1/x", [0.5])
 
+            a_sg = sinks[SINK_SPATGRIS].find("/spat/serv")
+            expect(len(a_sg) == 1, "A's ADM update reaches A's output",
+                   f"got {sinks[SINK_SPATGRIS].messages}")
+            if a_sg:
+                expect(close(a_sg[0][2:5], [0.5, 0.2, 0.3]),
+                       "A keeps its own y and z — accumulators are per input",
+                       f"got {a_sg[0]}")
     finally:
-        app.terminate()
+        for s in sinks.values():
+            s.stop()
+
+
+def test_v1_migration():
+    print("\n=== migration from a v1 configuration ===")
+    seed_v1()
+    with App():
+        pass
+
+    section = read_section()
+    m = re.search(r"savedConfiguration=(.*)", section)
+    expect(m is not None, "a v2 configuration is written on first launch")
+    if not m:
+        return
+    cfg = json.loads(unquote(m.group(1)))
+
+    expect(cfg.get("version") == 2, "it is tagged version 2", f"got {cfg.get('version')}")
+    expect(len(cfg["inputs"]) == 1, "the implicit input becomes one real input",
+           f"got {cfg['inputs']}")
+    expect(cfg["inputs"][0]["port"] == PORT_A,
+           "it keeps the old listen port", f"got {cfg['inputs'][0]}")
+    expect(cfg["inputs"][0].get("enabled") is True,
+           "and is enabled, so the next launch still listens",
+           f"got {cfg['inputs'][0]}")
+
+    expect(len(cfg["outputs"]) == 2, "both saved outputs survive",
+           f"got {cfg['outputs']}")
+    names = sorted(o["name"] for o in cfg["outputs"])
+    expect(names == ["legacy_a", "legacy_b"], "with their names",
+           f"got {names}")
+
+    by_name = {o["id"]: o["name"] for o in cfg["outputs"]}
+    routes = {by_name[r["outputId"]]: r for r in cfg["routes"]}
+    expect(len(cfg["routes"]) == 2, "each output gains a route from that input",
+           f"got {cfg['routes']}")
+    expect(routes["legacy_a"]["sourceOffset"] == 3,
+           "the per-output offset moves onto the route",
+           f"got {routes['legacy_a']}")
+    expect(routes["legacy_a"]["enabled"] is True,
+           "an active output becomes an enabled route")
+    expect(routes["legacy_b"]["enabled"] is False,
+           "an inactive output becomes a disabled route",
+           f"got {routes['legacy_b']}")
+    expect(all(r["srcMin"] is None and r["srcMax"] is None
+               for r in cfg["routes"]),
+           "migrated routes carry every source")
+
+    expect("savedOutputDevices=" in section,
+           "the v1 keys are left in place for a rollback")
+
+
+def main():
+    original = open(CONF, encoding="utf-8").read() if os.path.exists(CONF) else None
+    try:
+        test_routing()
+        test_v1_migration()
+    finally:
         subprocess.run(["pkill", "-f", "ossia-score --ui qml/Main.qml"],
                        capture_output=True)
-        for s in sinks:
-            s.stop()
-        time.sleep(1)
-        restore_settings(original)
+        if original is not None:
+            open(CONF, "w", encoding="utf-8").write(original)
 
     print()
     if FAILURES:
