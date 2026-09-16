@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Basic mode: one input, every output fed from it.
+// Basic mode: one input at a time, and the outputs it feeds.
 Pane {
     id: root
 
@@ -13,6 +13,15 @@ Pane {
 
     padding: 0
     background: Rectangle { color: Theme.backgroundColor }
+
+    RouteRangeDialog {
+        id: rangeDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+
+        property int outputId: -1
+        onRangeAccepted: (min, max) => root.controller.setRouteRange(outputId, min, max)
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -39,9 +48,8 @@ Pane {
             CustomLabel { text: "Listen port" }
 
             CustomTextField {
-                id: listenPortField
                 Layout.preferredWidth: 110
-                text: root.controller.settings.listenPort
+                text: root.controller.currentInputPort
                 color: acceptableInput ? Theme.textColor : Theme.errorColor
                 validator: IntValidator { bottom: 1; top: 65535 }
                 onTextEdited: {
@@ -50,33 +58,37 @@ Pane {
                 }
             }
 
+            CustomLabel { text: "Protocol" }
+
+            CustomComboBox {
+                Layout.preferredWidth: 150
+                model: root.controller.inputProtocols
+                currentIndex: Math.max(0, model.indexOf(root.controller.currentInputProtocol))
+                onActivated: root.controller.setInputProtocol(currentText)
+            }
+
             CustomSwitch {
                 text: "Listen"
-                checked: root.controller.inputListening
-                onToggled: {
-                    if (checked)
-                        root.controller.startListening();
-                    else
-                        root.controller.stopListening();
-                }
+                checked: root.controller.currentInputEnabled
+                onToggled: root.controller.setListening(checked)
             }
 
             CustomLabel {
-                text: root.controller.inputPortError
-                visible: root.controller.inputPortError !== ""
+                text: root.controller.currentInputError
+                visible: root.controller.currentInputError !== ""
                 color: Theme.errorColor
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
 
-            Item { Layout.fillWidth: root.controller.inputPortError === "" }
+            Item { Layout.fillWidth: root.controller.currentInputError === "" }
         }
 
         // ---- Outputs -------------------------------------------------- //
 
         SectionHeader {
             text: "Outputs"
-            hint: "every active output receives every incoming source"
+            hint: "each switch is this input's route to that output"
         }
 
         RowLayout {
@@ -112,7 +124,7 @@ Pane {
                 Layout.preferredWidth: 110
                 height: Theme.buttonHeight
                 text: "Remove all"
-                enabled: root.controller.outputListModel.count > 0
+                enabled: root.controller.routeListModel.count > 0
                 opacity: enabled ? 1.0 : 0.4
                 onClicked: root.controller.clearAllOutputs()
             }
@@ -187,31 +199,37 @@ Pane {
                 clip: true
 
                 ListView {
-                    model: root.controller.outputListModel
+                    model: root.controller.routeListModel
                     spacing: 6
 
                     delegate: OutputRow {
-                        required property int index
                         required property var model
 
                         width: ListView.view ? ListView.view.width : 0
                         name: model.name
                         host: model.host
                         port: model.port
-                        protocol: model.type
-                        active: model.active
-                        sourceOffset: model.sourceIndexOffset
+                        protocol: model.protocol
+                        routed: model.routed
+                        sourceOffset: model.sourceOffset
+                        srcMin: model.srcMin
+                        srcMax: model.srcMax
+                        alsoFedBy: model.alsoFedBy
 
-                        onActiveToggled: value => root.controller.setOutputActive(index, value)
-                        onOffsetEdited: value => root.controller.setOutputOffset(index, value)
-                        onRemoveRequested: root.controller.removeOutput(index)
+                        onRoutedToggled: value => root.controller.setRouteEnabled(model.outputId, value)
+                        onOffsetEdited: value => root.controller.setRouteOffset(model.outputId, value)
+                        onRemoveRequested: root.controller.removeOutput(model.outputId)
+                        onRangeEditRequested: {
+                            rangeDialog.outputId = model.outputId;
+                            rangeDialog.editRoute(model.name, model.srcMin, model.srcMax);
+                        }
                     }
                 }
             }
 
             CustomLabel {
                 anchors.centerIn: parent
-                visible: root.controller.outputListModel.count === 0
+                visible: root.controller.routeListModel.count === 0
                 color: Theme.textColorSecondary
                 text: "No outputs yet — use Quick setup above, or fill in the form."
             }

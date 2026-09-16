@@ -29,11 +29,11 @@ TestCase {
     // sg_constants.hpp:71 — the cartesian clamp SpatGRIS applies.
     readonly property real mbap: 1.6666667
 
-    // parseADMInput accumulates into a module-global keyed only by source
-    // number (Engine.js:195), so state leaks between tests. Each test below
-    // uses its own source index to stay isolated. Removing that global — one
-    // accumulator per input device — is exactly what multi-input requires.
-    function admSource(n) { return n; }
+    // parseADMInput accumulates onto the input device it was handed, so a
+    // fresh one per test is all the isolation needed.
+    function newInput(protocol) {
+        return { id: 1, name: "test", protocol: protocol || "Auto", admState: {} };
+    }
 
     function checkMsg(msg, address, values) {
         compare(msg.address, address, "address");
@@ -133,7 +133,7 @@ TestCase {
         ];
     }
     function test_adm_rejects_addresses(row) {
-        compare(Engine.parseADMInput(row.address, [1.0]), null);
+        compare(Engine.parseADMInput(newInput(), row.address, [1.0]), null);
     }
 
     // gain/mute/name/dref/dmax have no equivalent in the internal model; they
@@ -147,13 +147,13 @@ TestCase {
         ];
     }
     function test_adm_unmodelled_params(row) {
-        compare(Engine.parseADMInput("/adm/obj/90/" + row.param, [1.0]), null);
+        compare(Engine.parseADMInput(newInput(), "/adm/obj/90/" + row.param, [1.0]), null);
     }
 
     // ADM azimuth is +90 = left; SpatGRIS is -90 = left. Sign flips.
     // ADM has no vertical extent, so vspan is always 0.
     function test_adm_aed_emits_degrees() {
-        var n = Engine.parseADMInput("/adm/obj/10/aed", [30.0, 15.0, 0.8]);
+        var n = Engine.parseADMInput(newInput(), "/adm/obj/10/aed", [30.0, 15.0, 0.8]);
         compare(n.command, "deg");
         compare(n.sourceIndex, 10);
         fuzzyCompare(n.args[0], -30.0, eps, "azimuth sign flipped");
@@ -166,24 +166,25 @@ TestCase {
     // ADM sends per-parameter messages, so state accumulates per source and a
     // complete command is emitted on every update.
     function test_adm_accumulates_polar_components() {
-        var a = Engine.parseADMInput("/adm/obj/11/azim", [45.0]);
+        var inp = newInput();
+        var a = Engine.parseADMInput(inp, "/adm/obj/11/azim", [45.0]);
         compare(a.command, "deg");
         fuzzyCompare(a.args[0], -45.0, eps);
         fuzzyCompare(a.args[1], 0.0, eps, "elevation still at default");
         fuzzyCompare(a.args[2], 1.0, eps, "distance defaults to the unit sphere");
 
-        var b = Engine.parseADMInput("/adm/obj/11/elev", [20.0]);
+        var b = Engine.parseADMInput(inp, "/adm/obj/11/elev", [20.0]);
         fuzzyCompare(b.args[0], -45.0, eps, "azimuth retained");
         fuzzyCompare(b.args[1], 20.0, eps);
 
-        var c = Engine.parseADMInput("/adm/obj/11/dist", [0.5]);
+        var c = Engine.parseADMInput(inp, "/adm/obj/11/dist", [0.5]);
         fuzzyCompare(c.args[0], -45.0, eps);
         fuzzyCompare(c.args[1], 20.0, eps);
         fuzzyCompare(c.args[2], 0.5, eps);
     }
 
     function test_adm_xyz_emits_cartesian() {
-        var n = Engine.parseADMInput("/adm/obj/12/xyz", [0.1, 0.2, 0.3]);
+        var n = Engine.parseADMInput(newInput(), "/adm/obj/12/xyz", [0.1, 0.2, 0.3]);
         compare(n.command, "car");
         compare(n.sourceIndex, 12);
         fuzzyCompare(n.args[0], 0.1, eps);
@@ -193,8 +194,9 @@ TestCase {
     }
 
     function test_adm_accumulates_cartesian_components() {
-        Engine.parseADMInput("/adm/obj/13/xyz", [0.1, 0.2, 0.3]);
-        var n = Engine.parseADMInput("/adm/obj/13/x", [0.9]);
+        var inp = newInput();
+        Engine.parseADMInput(inp, "/adm/obj/13/xyz", [0.1, 0.2, 0.3]);
+        var n = Engine.parseADMInput(inp, "/adm/obj/13/x", [0.9]);
         compare(n.command, "car");
         fuzzyCompare(n.args[0], 0.9, eps, "x overwritten");
         fuzzyCompare(n.args[1], 0.2, eps, "y retained");
@@ -202,8 +204,9 @@ TestCase {
     }
 
     function test_adm_xy_leaves_z_alone() {
-        Engine.parseADMInput("/adm/obj/14/xyz", [0.1, 0.2, 0.7]);
-        var n = Engine.parseADMInput("/adm/obj/14/xy", [0.4, 0.5]);
+        var inp = newInput();
+        Engine.parseADMInput(inp, "/adm/obj/14/xyz", [0.1, 0.2, 0.7]);
+        var n = Engine.parseADMInput(inp, "/adm/obj/14/xy", [0.4, 0.5]);
         fuzzyCompare(n.args[0], 0.4, eps);
         fuzzyCompare(n.args[1], 0.5, eps);
         fuzzyCompare(n.args[2], 0.7, eps, "z untouched by /xy");
@@ -211,15 +214,17 @@ TestCase {
 
     // The last coordinate family written decides which command comes out.
     function test_adm_last_family_written_wins() {
-        Engine.parseADMInput("/adm/obj/15/xyz", [0.1, 0.2, 0.3]);
-        compare(Engine.parseADMInput("/adm/obj/15/azim", [10.0]).command, "deg");
-        compare(Engine.parseADMInput("/adm/obj/15/y", [0.4]).command, "car");
+        var inp = newInput();
+        Engine.parseADMInput(inp, "/adm/obj/15/xyz", [0.1, 0.2, 0.3]);
+        compare(Engine.parseADMInput(inp, "/adm/obj/15/azim", [10.0]).command, "deg");
+        compare(Engine.parseADMInput(inp, "/adm/obj/15/y", [0.4]).command, "car");
     }
 
     // Width alone does not switch coordinate mode.
     function test_adm_width_keeps_current_mode() {
-        Engine.parseADMInput("/adm/obj/16/aed", [30.0, 0.0, 1.0]);
-        var n = Engine.parseADMInput("/adm/obj/16/w", [0.25]);
+        var inp = newInput();
+        Engine.parseADMInput(inp, "/adm/obj/16/aed", [30.0, 0.0, 1.0]);
+        var n = Engine.parseADMInput(inp, "/adm/obj/16/w", [0.25]);
         compare(n.command, "deg", "still polar");
         fuzzyCompare(n.args[3], 0.25, eps, "width carried into the command");
     }
@@ -233,7 +238,7 @@ TestCase {
         ];
     }
     function test_adm_short_payloads_rejected(row) {
-        compare(Engine.parseADMInput(row.address, row.value), null);
+        compare(Engine.parseADMInput(newInput(), row.address, row.value), null);
     }
 
     // ---------------------------------------------------------------- //
@@ -427,6 +432,135 @@ TestCase {
         compare(Engine.mapMessage("car", 2, [1, 2, 3, 4, 5], "Nonexistent", null).length, 0);
     }
 
+
+    // ---------------------------------------------------------------- //
+    // Per-input ADM accumulator                                         //
+    // ---------------------------------------------------------------- //
+
+    // Two ADM senders each address their own source 1. A shared accumulator
+    // would let one overwrite the other's coordinates.
+    function test_adm_state_is_per_input() {
+        var a = newInput();
+        var b = newInput();
+
+        Engine.parseADMInput(a, "/adm/obj/1/xyz", [0.1, 0.2, 0.3]);
+        Engine.parseADMInput(b, "/adm/obj/1/xyz", [0.7, 0.8, 0.9]);
+
+        // Touching one axis on A must leave A's other axes, and all of B, alone.
+        var na = Engine.parseADMInput(a, "/adm/obj/1/x", [0.5]);
+        fuzzyCompare(na.args[0], 0.5, eps);
+        fuzzyCompare(na.args[1], 0.2, eps, "A keeps its own y");
+        fuzzyCompare(na.args[2], 0.3, eps, "A keeps its own z");
+
+        var nb = Engine.parseADMInput(b, "/adm/obj/1/y", [0.4]);
+        fuzzyCompare(nb.args[0], 0.7, eps, "B keeps its own x");
+        fuzzyCompare(nb.args[1], 0.4, eps);
+        fuzzyCompare(nb.args[2], 0.9, eps, "B keeps its own z");
+    }
+
+    // The coordinate family is part of that per-input state too.
+    function test_adm_mode_is_per_input() {
+        var a = newInput();
+        var b = newInput();
+        Engine.parseADMInput(a, "/adm/obj/1/xyz", [0, 0, 0]);
+        compare(Engine.parseADMInput(b, "/adm/obj/1/azim", [10.0]).command, "deg");
+        compare(Engine.parseADMInput(a, "/adm/obj/1/x", [0.1]).command, "car",
+                "A is still cartesian");
+    }
+
+    // ---------------------------------------------------------------- //
+    // parseInput — per-input protocol selection                         //
+    // ---------------------------------------------------------------- //
+
+    function test_parse_input_auto_sniffs_both_protocols() {
+        var inp = newInput("Auto");
+        compare(Engine.parseInput(inp, "/spat/serv", ["clr", 2]).command, "clr");
+        compare(Engine.parseInput(inp, "/adm/obj/5/xyz", [0, 0, 0]).command, "car");
+        compare(Engine.parseInput(inp, "/other/address", [1]), null);
+    }
+
+    // A declared protocol ignores anything that is not its own, so two senders
+    // on different ports cannot be confused for one another.
+    function test_parse_input_declared_protocol_is_exclusive_data() {
+        return [
+            { tag: "spatgris-takes-own", protocol: "SpatGRIS",
+              address: "/spat/serv", value: ["clr", 2], parsed: true },
+            { tag: "spatgris-rejects-adm", protocol: "SpatGRIS",
+              address: "/adm/obj/5/xyz", value: [0, 0, 0], parsed: false },
+            { tag: "adm-takes-own", protocol: "ADM-OSC",
+              address: "/adm/obj/5/xyz", value: [0, 0, 0], parsed: true },
+            { tag: "adm-rejects-spatgris", protocol: "ADM-OSC",
+              address: "/spat/serv", value: ["clr", 2], parsed: false }
+        ];
+    }
+    function test_parse_input_declared_protocol_is_exclusive(row) {
+        var got = Engine.parseInput(newInput(row.protocol), row.address, row.value);
+        compare(got !== null, row.parsed);
+    }
+
+    // ---------------------------------------------------------------- //
+    // routeAccepts — per-route source-id range filter                   //
+    // ---------------------------------------------------------------- //
+
+    function route(min, max) {
+        return { enabled: true, sourceOffset: 0, srcMin: min, srcMax: max };
+    }
+
+    function test_route_unbounded_accepts_everything_data() {
+        return [
+            { tag: "null-null", route: { srcMin: null, srcMax: null } },
+            { tag: "undefined", route: { } }
+        ];
+    }
+    function test_route_unbounded_accepts_everything(row) {
+        verify(Engine.routeAccepts(row.route, 1));
+        verify(Engine.routeAccepts(row.route, 9999));
+    }
+
+    function test_route_range_is_inclusive_data() {
+        return [
+            { tag: "below",       index: 0,  accepted: false },
+            { tag: "lower-bound", index: 1,  accepted: true },
+            { tag: "inside",      index: 5,  accepted: true },
+            { tag: "upper-bound", index: 8,  accepted: true },
+            { tag: "above",       index: 9,  accepted: false }
+        ];
+    }
+    function test_route_range_is_inclusive(row) {
+        compare(Engine.routeAccepts(route(1, 8), row.index), row.accepted);
+    }
+
+    function test_route_half_open_ranges_data() {
+        return [
+            { tag: "min-only-below",  route: { srcMin: 17, srcMax: null }, index: 16, accepted: false },
+            { tag: "min-only-at",     route: { srcMin: 17, srcMax: null }, index: 17, accepted: true },
+            { tag: "min-only-far",    route: { srcMin: 17, srcMax: null }, index: 999, accepted: true },
+            { tag: "max-only-inside", route: { srcMin: null, srcMax: 8 },  index: 1, accepted: true },
+            { tag: "max-only-above",  route: { srcMin: null, srcMax: 8 },  index: 9, accepted: false }
+        ];
+    }
+    function test_route_half_open_ranges(row) {
+        compare(Engine.routeAccepts(row.route, row.index), row.accepted);
+    }
+
+    // A range filter is about sources. Commands that carry no source index --
+    // /adm/lis, /adm/env, a global command, anything forwarded verbatim --
+    // would otherwise be silenced on every filtered route.
+    function test_route_sourceless_messages_bypass_the_filter() {
+        verify(Engine.routeAccepts(route(1, 8), -1),
+               "a sourceless message crosses a narrow range");
+        verify(Engine.routeAccepts(route(100, 200), -1));
+    }
+
+    // The filter tests the incoming index; the offset is applied afterwards,
+    // so the numbers a user types match the numbers on the sender.
+    function test_route_filter_precedes_offset() {
+        var r = route(1, 8);
+        r.sourceOffset = 16;
+        verify(Engine.routeAccepts(r, 8), "8 is in range before the offset");
+        verify(!Engine.routeAccepts(r, 9), "9 is out of range despite landing at 25");
+    }
+
     // ---------------------------------------------------------------- //
     // End-to-end: parse then map, the path a real message takes          //
     // ---------------------------------------------------------------- //
@@ -456,7 +590,7 @@ TestCase {
     // An ADM input feeding a SpatGRIS output: sign flips on the way in and
     // stays flipped on the way out.
     function test_end_to_end_adm_into_spatgris() {
-        var norm = Engine.parseADMInput("/adm/obj/20/aed", [90.0, 0.0, 1.0]);
+        var norm = Engine.parseADMInput(newInput(), "/adm/obj/20/aed", [90.0, 0.0, 1.0]);
         var out = Engine.mapMessage(norm.command, norm.sourceIndex, norm.args,
                                     "SpatGRIS", norm);
         checkMsg(out[0], "/spat/serv", ["deg", 20, -90.0, 0.0, 1.0, 0.0, 0.0]);

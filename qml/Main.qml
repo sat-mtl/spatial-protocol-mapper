@@ -10,10 +10,9 @@ import "spm/Engine.js" as Engine
 //
 // Engine.js is imported *here only*. It is not a `.pragma library`, so every
 // QML file that imports it would otherwise get its own copy of the module
-// state (the ADM accumulator, the log drain budget) while sharing the window's
+// state (the log drain budget, the dispatch index) while sharing the window's
 // properties — two engines pretending to be one. The views therefore call the
-// functions below instead of reaching into Engine directly, which also leaves
-// a single seam to swap the engine behind when routing moves to a matrix.
+// functions below instead of reaching into Engine directly.
 ApplicationWindow {
     id: window
 
@@ -25,17 +24,21 @@ ApplicationWindow {
     title: "Spatial Protocol Mapper"
 
     // Category kept as-is: renaming it would silently orphan every existing
-    // user's saved output devices.
+    // user's saved devices.
     Settings {
         id: appSettings
         category: "OSCRouter"
 
-        property int listenPort: 18032
         property bool logReceivedMessages: true
         property bool logSentMessages: false
         property int monitorMaxRate: 500 // max log lines per second displayed
-        property string savedOutputDevices: "[]"
         property int lastViewIndex: 0
+
+        // v2: the whole routing matrix. v1's listenPort + savedOutputDevices
+        // are read once by Engine.migrateFromV1() and then left alone.
+        property string savedConfiguration: ""
+        property int listenPort: 18032
+        property string savedOutputDevices: "[]"
     }
 
     // Dark unless the OS explicitly asks for light (Unknown reads as dark).
@@ -72,56 +75,97 @@ ApplicationWindow {
 
     color: Theme.backgroundColor
 
-    // Exposed to the views, which are given this window as their `controller`
-    // rather than reaching into its ids through the QML context chain.
-    property alias settings: appSettings
     readonly property var outputProtocols: ["SpatGRIS", "ADM-OSC", "SPAT Revolution"]
+    readonly property var inputProtocols: ["Auto", "SpatGRIS", "ADM-OSC"]
+    property alias settings: appSettings
 
-    // ---- Engine state ------------------------------------------------- //
+    // ---- Engine state -------------------------------------------------- //
     // Free variables in Engine.js resolve against this object's context.
-    property var outputDevices: []
-    property var oscInput
-    property var udpInput
-    property string inputPortError: ""
-    property bool inputListening: false
-    property string outputError: ""
+    // Plain arrays: the engine mutates them, the list models below are what
+    // the views bind to.
+    property var inputs: []
+    property var outputs: []
+    property var routes: []
 
-    // Owned here rather than by a view: the list outlives any one tab, and
-    // Engine.updateOutputList() writes into it.
+    property alias inputListModel: inputListModel
     property alias outputListModel: outputListModel
+    property alias routeListModel: routeListModel
+
+    ListModel { id: inputListModel }
     ListModel { id: outputListModel }
+    // One row per output, describing the current input's route to it.
+    ListModel { id: routeListModel }
 
     property alias messageMonitor: monitorView.messageMonitor
 
     // Formatting a log line costs more than the routing itself, so it is only
-    // done while the monitor is on screen — the same trade the collapsible
-    // log pane used to make, now keyed on the tab instead of its visibility.
+    // done while the monitor is on screen.
     readonly property bool monitorActive: currentViewIndex === monitorViewIndex
 
-    // ---- Views -------------------------------------------------------- //
-    readonly property int routingViewIndex: 0
-    readonly property int monitorViewIndex: 1
-    property int currentViewIndex: appSettings.lastViewIndex
-    onCurrentViewIndexChanged: appSettings.lastViewIndex = currentViewIndex
+    // ---- Current input -------------------------------------------------- //
+    // The basic view edits one input at a time. These mirror it as bindable
+    // properties, because the engine's state is plain JS with no notifiers.
+    property int currentInputId: -1
+    property string currentInputName: ""
+    property string currentInputProtocol: "Auto"
+    property int currentInputPort: 18032
+    property bool currentInputEnabled: true
+    property bool currentInputListening: false
+    property string currentInputError: ""
+    property string outputError: ""
 
-    // ---- Controller facade -------------------------------------------- //
-    // Everything the views are allowed to ask the engine to do.
+    function syncCurrentInput() {
+        if (currentInputId < 0 && inputs.length > 0)
+            currentInputId = inputs[0].id;
+
+        const inp = Engine.findInput(currentInputId);
+        if (!inp) {
+            if (inputs.length > 0) {
+                currentInputId = inputs[0].id;
+                syncCurrentInput();
+            }
+            return;
+        }
+        currentInputName = inp.name;
+        currentInputProtocol = inp.protocol;
+        currentInputPort = inp.port;
+        currentInputEnabled = inp.enabled !== false;
+        currentInputListening = inp.listening;
+        currentInputError = inp.error;
+    }
+
+    function selectInput(id) {
+        currentInputId = id;
+        syncCurrentInput();
+        Engine.updateRouteList(currentInputId);
+    }
+
+    // Everything that can change what the views show, in one place.
+    function refresh() {
+        Engine.updateOutputList();
+        Engine.updateRouteList(currentInputId);
+        syncCurrentInput();
+    }
+
+    // ---- Controller facade ---------------------------------------------- //
 
     function setListenPort(port) {
-        Engine.closeInputDevice();
-        appSettings.listenPort = port;
+        Engine.setInputPort(currentInputId, port);
+        refresh();
     }
 
-    function startListening() {
-        Engine.createInputDevice(appSettings.listenPort);
+    function setInputProtocol(protocol) {
+        Engine.setInputProtocol(currentInputId, protocol);
+        refresh();
     }
 
-    function stopListening() {
-        Engine.closeInputDevice();
+    function setListening(listening) {
+        Engine.setInputListening(currentInputId, listening);
+        refresh();
     }
 
     // Returns "" on success, or the reason it was refused.
-    function addOutput(name, host, port, type) {
+    function addOutput(name, host, port, protocol) {
         name = (name || "").trim();
         host = (host || "").trim();
         const portNum = parseInt(port);
@@ -135,46 +179,67 @@ ApplicationWindow {
         if (isNaN(portNum) || portNum < 1 || portNum > 65535)
             return "Port must be between 1 and 65535";
 
-        Engine.createOutputDevice(name, host, portNum, type);
+        const dev = Engine.createOutput(name, host, portNum, protocol);
+        // Adding an output from a given input's view wires it to that input.
+        if (currentInputId >= 0)
+            Engine.setRoute(currentInputId, dev.id, { enabled: true });
+        Engine.saveConfiguration();
+        refresh();
         return "";
     }
 
-    function removeOutput(index) {
-        Engine.removeOutputDevice(index);
-    }
-
-    function setOutputActive(index, active) {
-        if (index < 0 || index >= outputDevices.length)
-            return;
-        outputDevices[index].active = active;
-        Engine.updateOutputList();
-        Engine.saveOutputDevices();
-    }
-
-    function setOutputOffset(index, offset) {
-        if (index < 0 || index >= outputDevices.length)
-            return;
-        outputDevices[index].sourceIndexOffset = offset;
-        Engine.saveOutputDevices();
+    function removeOutput(outputId) {
+        Engine.removeOutput(outputId);
+        refresh();
     }
 
     function clearAllOutputs() {
-        while (outputDevices.length > 0)
-            Engine.removeOutputDevice(0);
+        while (outputs.length > 0)
+            Engine.removeOutput(outputs[0].id);
+        refresh();
+    }
+
+    function setRouteEnabled(outputId, enabled) {
+        Engine.setRoute(currentInputId, outputId, { enabled: enabled });
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    function setRouteOffset(outputId, offset) {
+        Engine.setRoute(currentInputId, outputId, { sourceOffset: offset });
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    // -1 on either bound means "every source".
+    function setRouteRange(outputId, min, max) {
+        Engine.setRoute(currentInputId, outputId, {
+            srcMin: (min < 0) ? null : min,
+            srcMax: (max < 0) ? null : max
+        });
+        Engine.saveConfiguration();
+        refresh();
     }
 
     function clearLog() {
         Engine.clearLogs();
     }
 
-    // ---- Lifecycle ----------------------------------------------------- //
+    // ---- Views ----------------------------------------------------------- //
+    readonly property int routingViewIndex: 0
+    readonly property int monitorViewIndex: 1
+    property int currentViewIndex: appSettings.lastViewIndex
+    onCurrentViewIndexChanged: appSettings.lastViewIndex = currentViewIndex
+
+    // ---- Lifecycle -------------------------------------------------------- //
     Component.onCompleted: {
-        Engine.restoreSavedSettings();
-        Engine.createInputDevice(appSettings.listenPort);
+        Engine.restoreConfiguration();
+        if (inputs.length > 0)
+            currentInputId = inputs[0].id;
+        refresh();
     }
 
     Timer {
-        id: logFlushTimer
         interval: 16
         running: window.monitorActive
         repeat: true
