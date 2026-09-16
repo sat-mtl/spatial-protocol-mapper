@@ -18,7 +18,7 @@
 // visual pass instead.
 import QtQuick
 import QtTest
-import "../qml/Engine.js" as Engine
+import "../qml/spm/Engine.js" as Engine
 
 TestCase {
     id: tc

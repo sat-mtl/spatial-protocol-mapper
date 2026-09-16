@@ -1,7 +1,7 @@
 .import "LogQueue.js" as LogQueue
 
 function restoreSavedSettings() {
-    inputPortField.text = appSettings.listenPort;
+    // The listen-port field binds to appSettings directly; nothing to push.
 
     // Restore saved output devices
     try {
@@ -79,7 +79,7 @@ function clearLogs() {
 }
 
 function onInputValueReceived(address, value) {
-    if (appSettings.logReceivedMessages && messageMonitor.visible) {
+    if (appSettings.logReceivedMessages && monitorActive) {
         LogQueue.pushInput(`IN: ${address} = ${JSON.stringify(value)}`);
     }
 
@@ -115,7 +115,7 @@ function onInputValueReceived(address, value) {
                 // wrap scalar values so "/a/b" with value 0 doesn't crash.
                 const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
                 output.udp.osc(msg.address, oscArgs);
-                if (appSettings.logSentMessages && messageMonitor.visible) {
+                if (appSettings.logSentMessages && monitorActive) {
                     LogQueue.pushOutput(`OUT: ${output.name} ${msg.address} = ${JSON.stringify(msg.value)}`);
                 }
             }
@@ -151,7 +151,7 @@ function forwardAdmRaw(address, value) {
         }
 
         output.udp.osc(outAddress, oscArgs);
-        if (appSettings.logSentMessages && messageMonitor.visible) {
+        if (appSettings.logSentMessages && monitorActive) {
             LogQueue.pushOutput(`OUT: ${output.name} ${outAddress} = ${JSON.stringify(value)}`);
         }
     }
