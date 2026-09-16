@@ -76,7 +76,7 @@ ApplicationWindow {
     color: Theme.backgroundColor
 
     readonly property var outputProtocols: ["SpatGRIS", "ADM-OSC", "SPAT Revolution"]
-    readonly property var inputProtocols: ["Auto", "SpatGRIS", "ADM-OSC"]
+    readonly property var inputProtocols: ["Auto", "SpatGRIS", "ADM-OSC", "SPAT Revolution"]
     property alias settings: appSettings
 
     // ---- Engine state -------------------------------------------------- //

@@ -741,6 +741,102 @@ TestCase {
         verify(countSpy.count > 0, "a different input rebuilds");
     }
 
+// ---------------------------------------------------------------- //
+    // parseSPATInput — /source/{n}/… as an input                        //
+    // ---------------------------------------------------------------- //
+
+    function test_spat_input_rejects_addresses_data() {
+        return [
+            { tag: "spatgris", address: "/spat/serv" },
+            { tag: "adm",      address: "/adm/obj/1/xyz" },
+            { tag: "too-deep", address: "/source/1/foo/bar" },
+            { tag: "no-index", address: "/source/x/aed" }
+        ];
+    }
+    function test_spat_input_rejects_addresses(row) {
+        compare(Engine.parseSPATInput(newInput(), row.address, [1.0]), null);
+    }
+
+    // mode/gain/mute have no equivalent in the internal model.
+    function test_spat_input_unmodelled_params() {
+        compare(Engine.parseSPATInput(newInput(), "/source/1/mode", ["dome"]), null);
+        compare(Engine.parseSPATInput(newInput(), "/source/1/gain", [0.5]), null);
+    }
+
+    // SPAT shares the SpatGRIS azimuth sign, so nothing flips; radius arrives
+    // as a percentage.
+    function test_spat_input_aed() {
+        var n = Engine.parseSPATInput(newInput(), "/source/4/aed", [90.0, 30.0, 80.0]);
+        compare(n.command, "deg");
+        compare(n.sourceIndex, 4);
+        fuzzyCompare(n.args[0], 90.0, eps, "azimuth is not flipped");
+        fuzzyCompare(n.args[1], 30.0, eps);
+        fuzzyCompare(n.args[2], 0.8, eps, "percentage becomes a unit radius");
+    }
+
+    function test_spat_input_xyz_is_unscaled() {
+        var n = Engine.parseSPATInput(newInput(), "/source/9/xyz", [1.5, -0.5, 0.25]);
+        compare(n.command, "car");
+        fuzzyCompare(n.args[0], 1.5, eps);
+        fuzzyCompare(n.args[1], -0.5, eps);
+        fuzzyCompare(n.args[2], 0.25, eps);
+    }
+
+    // One figure on the wire fills both extents, and does not change the
+    // coordinate family.
+    function test_spat_input_spread_fills_both_extents() {
+        var inp = newInput();
+        Engine.parseSPATInput(inp, "/source/2/aed", [10.0, 0.0, 100.0]);
+        var n = Engine.parseSPATInput(inp, "/source/2/spread", [30.0]);
+        compare(n.command, "deg", "still polar");
+        fuzzyCompare(n.args[3], 0.3, eps);
+        fuzzyCompare(n.args[4], 0.3, eps);
+    }
+
+    function test_spat_input_last_family_written_wins() {
+        var inp = newInput();
+        Engine.parseSPATInput(inp, "/source/3/xyz", [0.1, 0.2, 0.3]);
+        compare(Engine.parseSPATInput(inp, "/source/3/aed", [0, 0, 100]).command, "deg");
+        compare(Engine.parseSPATInput(inp, "/source/3/xyz", [0, 0, 0]).command, "car");
+    }
+
+    function test_spat_input_state_is_per_input() {
+        var a = newInput();
+        var b = newInput();
+        Engine.parseSPATInput(a, "/source/1/xyz", [0.1, 0.2, 0.3]);
+        Engine.parseSPATInput(b, "/source/1/xyz", [0.7, 0.8, 0.9]);
+        var na = Engine.parseSPATInput(a, "/source/1/spread", [0.0]);
+        fuzzyCompare(na.args[0], 0.1, eps, "A keeps its own coordinates");
+    }
+
+    // A SPAT source through a SPAT output must come out exactly as it went in.
+    function test_spat_round_trips_through_its_own_output_data() {
+        return [
+            { tag: "aed", address: "/source/4/aed", value: [90.0, 30.0, 80.0],
+              outAddress: "/source/4/aed", expected: [90.0, 30.0, 80.0] },
+            { tag: "xyz", address: "/source/4/xyz", value: [1.5, -0.5, 0.25],
+              outAddress: "/source/4/xyz", expected: [1.5, -0.5, 0.25] }
+        ];
+    }
+    function test_spat_round_trips_through_its_own_output(row) {
+        var norm = Engine.parseSPATInput(newInput(), row.address, row.value);
+        var out = Engine.mapMessage(norm.command, norm.sourceIndex, norm.args,
+                                    "SPAT Revolution", norm);
+        checkMsg(out[0], row.outAddress, row.expected);
+    }
+
+    function test_parse_input_auto_sniffs_spat() {
+        var inp = newInput("Auto");
+        compare(Engine.parseInput(inp, "/source/1/xyz", [0, 0, 0]).command, "car");
+    }
+
+    function test_parse_input_spat_protocol_is_exclusive() {
+        var inp = newInput("SPAT Revolution");
+        verify(Engine.parseInput(inp, "/source/1/xyz", [0, 0, 0]) !== null);
+        compare(Engine.parseInput(inp, "/spat/serv", ["clr", 2]), null);
+        compare(Engine.parseInput(inp, "/adm/obj/1/xyz", [0, 0, 0]), null);
+    }
+
     // ---------------------------------------------------------------- //
     // End-to-end: parse then map, the path a real message takes          //
     // ---------------------------------------------------------------- //

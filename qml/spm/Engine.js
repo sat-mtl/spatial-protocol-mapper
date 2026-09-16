@@ -136,9 +136,12 @@ function parseInput(inp, address, value) {
         return address.startsWith("/spat/serv") ? parseSpatGRISInput(value) : null;
     case "ADM-OSC":
         return address.startsWith("/adm/obj/") ? parseADMInput(inp, address, value) : null;
+    case "SPAT Revolution":
+        return address.startsWith("/source/") ? parseSPATInput(inp, address, value) : null;
     }
     if (address.startsWith("/spat/serv")) return parseSpatGRISInput(value);
     if (address.startsWith("/adm/obj/")) return parseADMInput(inp, address, value);
+    if (address.startsWith("/source/")) return parseSPATInput(inp, address, value);
     return null;
 }
 
@@ -305,6 +308,73 @@ function parseADMInput(inp, address, value) {
             args: [s.x, s.y, s.z, s.w, 0]
         };
     }
+}
+
+// ----- Input parsing: /source/{n}/… (SPAT Revolution) ------------------- //
+// The mirror of mapForSPAT, so a SPAT source round-trips unchanged: azimuth
+// keeps the SpatGRIS sign (SPAT shares it), radius arrives as a percentage,
+// and spread is one figure that fills both extents.
+//
+// Like ADM, SPAT sends one parameter per message, so the accumulator lives on
+// the input device.
+function getSpatSource(inp, n) {
+    if (!inp.spatState)
+        inp.spatState = {};
+    if (!inp.spatState[n]) {
+        inp.spatState[n] = {
+            azim: 0, elev: 0, dist: 1.0,
+            x: 0, y: 0, z: 0,
+            spread: 0,
+            lastMode: "car"
+        };
+    }
+    return inp.spatState[n];
+}
+
+function parseSPATInput(inp, address, value) {
+    const m = address.match(/^\/source\/(\d+)\/(\w+)$/);
+    if (!m) return null;
+
+    const n = parseInt(m[1]);
+    const param = m[2];
+    const s = getSpatSource(inp, n);
+
+    if (!value) return null;
+
+    switch (param) {
+    case "aed":
+        if (value.length < 3) return null;
+        s.azim = value[0]; s.elev = value[1]; s.dist = value[2] / 100.0;
+        s.lastMode = "pol";
+        break;
+    case "xyz":
+        if (value.length < 3) return null;
+        s.x = value[0]; s.y = value[1]; s.z = value[2];
+        s.lastMode = "car";
+        break;
+    case "spread":
+        if (value.length < 1) return null;
+        // One figure on the wire, both extents internally.
+        s.spread = value[0] / 100.0;
+        // Spread alone doesn't switch coordinate mode.
+        break;
+    default:
+        // mode/gain/mute and the rest have no equivalent in our model.
+        return null;
+    }
+
+    if (s.lastMode === "pol") {
+        return {
+            command: "deg",
+            sourceIndex: n,
+            args: [s.azim, s.elev, s.dist, s.spread, s.spread]
+        };
+    }
+    return {
+        command: "car",
+        sourceIndex: n,
+        args: [s.x, s.y, s.z, s.spread, s.spread]
+    };
 }
 
 function mapMessage(command, idx, args, outputType, norm) {
@@ -587,8 +657,9 @@ function setInputProtocol(id, protocol) {
     const inp = findInput(id);
     if (!inp) return;
     inp.protocol = protocol;
-    // The accumulated ADM coordinates describe the old interpretation.
+    // The accumulated coordinates describe the old interpretation.
     inp.admState = {};
+    inp.spatState = {};
     updateInputList();
     saveConfiguration();
 }
