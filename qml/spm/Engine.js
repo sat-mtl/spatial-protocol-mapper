@@ -706,13 +706,109 @@ function otherFeedersOf(inputId, outputId) {
     return names;
 }
 
+// Where each output's sources land once every enabled route into it has had
+// its range clipped and its offset applied. Splitting one sender across
+// renderers by source id is exactly what makes two routes collide on the same
+// index, so the matrix says so rather than letting it be found by ear.
+function outputCoverage(outputId) {
+    const spans = [];
+    for (let r of routes) {
+        if (r.outputId !== outputId || !r.enabled) continue;
+        const off = r.sourceOffset || 0;
+        const lo = ((r.srcMin === null || r.srcMin === undefined) ? 1 : r.srcMin) + off;
+        const hi = (r.srcMax === null || r.srcMax === undefined)
+                   ? Number.POSITIVE_INFINITY : r.srcMax + off;
+        spans.push({ lo: lo, hi: hi });
+    }
+    if (spans.length === 0)
+        return { text: "", collision: false, count: 0 };
+
+    spans.sort(function (a, b) { return a.lo - b.lo; });
+
+    let collision = false;
+    for (let i = 1; i < spans.length; i++) {
+        if (spans[i].lo <= spans[i - 1].hi) { collision = true; break; }
+    }
+
+    const parts = [];
+    for (let s of spans) {
+        if (s.hi === Number.POSITIVE_INFINITY) parts.push(s.lo + "+");
+        else if (s.lo === s.hi) parts.push(String(s.lo));
+        else parts.push(s.lo + "\u2013" + s.hi);
+    }
+    return { text: parts.join(", "), collision: collision, count: spans.length };
+}
+
+// Row-major (one input at a time), which is the order the matrix grid lays
+// its cells out in.
+function updateMatrixList() {
+    const rows = [];
+    for (let inp of inputs) {
+        for (let out of outputs) {
+            const r = findRoute(inp.id, out.id);
+            rows.push({
+                inputId: inp.id,
+                outputId: out.id,
+                routed: r ? r.enabled : false,
+                sourceOffset: r ? (r.sourceOffset || 0) : 0,
+                srcMin: (r && r.srcMin !== null && r.srcMin !== undefined) ? r.srcMin : -1,
+                srcMax: (r && r.srcMax !== null && r.srcMax !== undefined) ? r.srcMax : -1
+            });
+        }
+    }
+    syncModel(matrixModel, rows, ["inputId", "outputId"]);
+}
+
+// Enable or disable every route along one row or column in one go -- muting a
+// destination, or silencing a sender, without walking every cell.
+function setRowEnabled(inputId, enabled) {
+    for (let out of outputs)
+        setRoute(inputId, out.id, { enabled: enabled });
+}
+
+function setColumnEnabled(outputId, enabled) {
+    for (let inp of inputs)
+        setRoute(inp.id, outputId, { enabled: enabled });
+}
+
 // ----- List models ------------------------------------------------------- //
 // The engine keeps plain JS arrays; the views bind to these.
 
+// Rebuilding a ListModel destroys every delegate: the matrix would flicker on
+// each click, lose hover, and reset its scroll position. Patch in place while
+// the rows still describe the same things, and only rebuild when the shape
+// actually changed.
+function syncModel(model, rows, identity) {
+    let sameShape = (model.count === rows.length);
+    if (sameShape) {
+        for (let i = 0; i < rows.length && sameShape; i++) {
+            const cur = model.get(i);
+            for (let k of identity) {
+                if (cur[k] !== rows[i][k]) { sameShape = false; break; }
+            }
+        }
+    }
+
+    if (!sameShape) {
+        model.clear();
+        for (let r of rows)
+            model.append(r);
+        return;
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+        const cur = model.get(i);
+        for (let k in rows[i]) {
+            if (cur[k] !== rows[i][k])
+                model.setProperty(i, k, rows[i][k]);
+        }
+    }
+}
+
 function updateInputList() {
-    inputListModel.clear();
+    const rows = [];
     for (let inp of inputs) {
-        inputListModel.append({
+        rows.push({
             inputId: inp.id,
             name: inp.name,
             protocol: inp.protocol,
@@ -722,34 +818,40 @@ function updateInputList() {
             error: inp.error
         });
     }
+    syncModel(inputListModel, rows, ["inputId"]);
     // openInput() binds through Qt.callLater, so the listening flag settles
     // after the call that requested it; the window mirrors it from here.
     syncCurrentInput();
 }
 
 function updateOutputList() {
-    outputListModel.clear();
+    const rows = [];
     for (let out of outputs) {
+        const cov = outputCoverage(out.id);
         // Only display fields — the `udp` socket is a QObject and doesn't
         // belong in a ListModel.
-        outputListModel.append({
+        rows.push({
             outputId: out.id,
             name: out.name,
             host: out.host,
             port: out.port,
-            protocol: out.protocol
+            protocol: out.protocol,
+            coverage: cov.text,
+            collision: cov.collision,
+            feederCount: cov.count
         });
     }
+    syncModel(outputListModel, rows, ["outputId"]);
 }
 
 // One row per output, describing this input's route to it. ListModel cannot
 // carry null, so an unbounded range is -1.
 function updateRouteList(inputId) {
-    routeListModel.clear();
+    const rows = [];
     for (let out of outputs) {
         const r = findRoute(inputId, out.id);
         const others = otherFeedersOf(inputId, out.id);
-        routeListModel.append({
+        rows.push({
             outputId: out.id,
             name: out.name,
             host: out.host,
@@ -762,6 +864,7 @@ function updateRouteList(inputId) {
             alsoFedBy: others.join(", ")
         });
     }
+    syncModel(routeListModel, rows, ["outputId"]);
 }
 
 // ----- Persistence ------------------------------------------------------- //

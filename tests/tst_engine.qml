@@ -561,6 +561,186 @@ TestCase {
         verify(!Engine.routeAccepts(r, 9), "9 is out of range despite landing at 25");
     }
 
+// ---------------------------------------------------------------- //
+    // outputCoverage — where an output's sources land                   //
+    // ---------------------------------------------------------------- //
+    //
+    // outputCoverage reads the `routes` free variable, which resolves against
+    // the window at runtime. The TestCase declares its own so the function can
+    // be driven directly.
+
+    property var routes: []
+
+    function span(inputId, outputId, offset, min, max, enabled) {
+        return {
+            inputId: inputId, outputId: outputId,
+            enabled: enabled === undefined ? true : enabled,
+            sourceOffset: offset, srcMin: min, srcMax: max
+        };
+    }
+
+    function coverageOf(routeList) {
+        tc.routes = routeList;
+        return Engine.outputCoverage(1);
+    }
+
+    function test_coverage_of_nothing() {
+        var cov = coverageOf([]);
+        compare(cov.count, 0);
+        compare(cov.text, "");
+        verify(!cov.collision);
+    }
+
+    // An unbounded route starts at source 1 and runs on.
+    function test_coverage_unbounded_reads_as_open_ended() {
+        var cov = coverageOf([span(1, 1, 0, null, null)]);
+        compare(cov.text, "1+");
+        verify(!cov.collision);
+    }
+
+    function test_coverage_unbounded_with_offset() {
+        compare(coverageOf([span(1, 1, 16, null, null)]).text, "17+");
+    }
+
+    // Two senders split by source id, rebased so they do not overlap: the
+    // whole point of the feature, and it must not warn.
+    function test_coverage_disjoint_split_does_not_collide() {
+        var cov = coverageOf([
+            span(1, 1, 0, 1, 8),
+            span(2, 1, 8, 1, 8)     // 1-8 shifted to 9-16
+        ]);
+        compare(cov.count, 2);
+        compare(cov.text, "1\u20138, 9\u201316");
+        verify(!cov.collision, "adjacent but disjoint spans are fine");
+    }
+
+    function test_coverage_overlapping_spans_collide() {
+        var cov = coverageOf([
+            span(1, 1, 0, 1, 8),
+            span(2, 1, 4, 1, 8)     // 5-12 overlaps 1-8
+        ]);
+        verify(cov.collision, "5..8 is written by both senders");
+    }
+
+    // Two unbounded routes always collide -- both start at 1 and never end.
+    function test_coverage_two_unbounded_routes_collide() {
+        verify(coverageOf([span(1, 1, 0, null, null),
+                           span(2, 1, 0, null, null)]).collision);
+    }
+
+    // An open-ended route swallows anything rebased above it.
+    function test_coverage_open_ended_collides_with_later_span() {
+        verify(coverageOf([span(1, 1, 0, 1, null),
+                           span(2, 1, 100, 1, 8)]).collision);
+    }
+
+    function test_coverage_ignores_disabled_routes() {
+        var cov = coverageOf([
+            span(1, 1, 0, 1, 8),
+            span(2, 1, 0, 1, 8, false)
+        ]);
+        compare(cov.count, 1, "a disabled route contributes nothing");
+        verify(!cov.collision);
+    }
+
+    function test_coverage_ignores_other_outputs() {
+        var cov = coverageOf([
+            span(1, 1, 0, 1, 8),
+            span(2, 99, 0, 1, 8)
+        ]);
+        compare(cov.count, 1);
+    }
+
+    // A single source reads as one number rather than "3-3".
+    function test_coverage_single_source_span() {
+        compare(coverageOf([span(1, 1, 0, 3, 3)]).text, "3");
+    }
+
+// ---------------------------------------------------------------- //
+    // syncModel — in-place list updates                                 //
+    // ---------------------------------------------------------------- //
+
+    ListModel { id: probeModel }
+
+    SignalSpy {
+        id: countSpy
+        target: probeModel
+        signalName: "countChanged"
+    }
+
+    function fillProbe(rows) {
+        probeModel.clear();
+        for (var i = 0; i < rows.length; i++)
+            probeModel.append(rows[i]);
+        countSpy.clear();
+    }
+
+    function test_syncmodel_fills_an_empty_model() {
+        probeModel.clear();
+        Engine.syncModel(probeModel, [{ outputId: 1, name: "a" },
+                                      { outputId: 2, name: "b" }], ["outputId"]);
+        compare(probeModel.count, 2);
+        compare(probeModel.get(1).name, "b");
+    }
+
+    // Same rows, changed values: patch rather than rebuild, or every delegate
+    // is destroyed on each click — the matrix would lose hover and scroll.
+    function test_syncmodel_patches_without_rebuilding() {
+        fillProbe([{ outputId: 1, routed: true, sourceOffset: 0 },
+                   { outputId: 2, routed: true, sourceOffset: 0 }]);
+
+        Engine.syncModel(probeModel,
+                         [{ outputId: 1, routed: false, sourceOffset: 4 },
+                          { outputId: 2, routed: true, sourceOffset: 0 }],
+                         ["outputId"]);
+
+        compare(probeModel.count, 2);
+        compare(probeModel.get(0).routed, false);
+        compare(probeModel.get(0).sourceOffset, 4);
+        compare(probeModel.get(1).routed, true);
+        compare(countSpy.count, 0, "the model was never emptied");
+    }
+
+    function test_syncmodel_rebuilds_when_identity_changes() {
+        fillProbe([{ outputId: 1, name: "a" },
+                   { outputId: 2, name: "b" }]);
+
+        // An output removed from the middle shifts every identity after it.
+        Engine.syncModel(probeModel, [{ outputId: 2, name: "b" }], ["outputId"]);
+
+        compare(probeModel.count, 1);
+        compare(probeModel.get(0).outputId, 2);
+        verify(countSpy.count > 0, "a shape change does rebuild");
+    }
+
+    function test_syncmodel_rebuilds_when_row_count_changes() {
+        fillProbe([{ outputId: 1, name: "a" }]);
+        Engine.syncModel(probeModel, [{ outputId: 1, name: "a" },
+                                      { outputId: 2, name: "b" }], ["outputId"]);
+        compare(probeModel.count, 2);
+        compare(probeModel.get(1).name, "b");
+    }
+
+    // Two-part identity, as the matrix uses.
+    function test_syncmodel_composite_identity() {
+        fillProbe([{ inputId: 1, outputId: 1, routed: false },
+                   { inputId: 1, outputId: 2, routed: false }]);
+
+        Engine.syncModel(probeModel,
+                         [{ inputId: 1, outputId: 1, routed: true },
+                          { inputId: 1, outputId: 2, routed: false }],
+                         ["inputId", "outputId"]);
+        compare(probeModel.get(0).routed, true);
+        compare(countSpy.count, 0);
+
+        Engine.syncModel(probeModel,
+                         [{ inputId: 2, outputId: 1, routed: true },
+                          { inputId: 2, outputId: 2, routed: false }],
+                         ["inputId", "outputId"]);
+        compare(probeModel.get(0).inputId, 2);
+        verify(countSpy.count > 0, "a different input rebuilds");
+    }
+
     // ---------------------------------------------------------------- //
     // End-to-end: parse then map, the path a real message takes          //
     // ---------------------------------------------------------------- //
