@@ -13,7 +13,6 @@ Rectangle {
     property int port: 0
     property string protocol: ""
     property var protocols: []
-    property bool alternate: false
 
     property bool routed: true
     property int sourceOffset: 0
@@ -40,8 +39,7 @@ Rectangle {
     signal removeRequested
 
     implicitHeight: 48
-    color: root.alternate ? Qt.darker(Theme.backgroundColorSecondary, 1.12)
-                          : Theme.backgroundColorSecondary
+    color: Theme.backgroundColorSecondary
 
     Rectangle {
         anchors.left: parent.left

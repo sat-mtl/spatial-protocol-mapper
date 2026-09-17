@@ -17,7 +17,6 @@ Rectangle {
     property var protocols: []
     // Which input the outputs table is showing routes for.
     property bool selected: false
-    property bool alternate: false
 
     signal listeningToggled(bool value)
     signal nameEdited(string value)
@@ -27,9 +26,7 @@ Rectangle {
     signal selectRequested
 
     implicitHeight: 48
-    color: root.selected ? Theme.backgroundColorTertiary
-         : root.alternate ? Qt.darker(Theme.backgroundColorSecondary, 1.12)
-                          : Theme.backgroundColorSecondary
+    color: Theme.backgroundColorSecondary
 
     // Shared edges: only the bottom rule, so consecutive rows read as a table
     // rather than as a stack of cards.
@@ -46,7 +43,7 @@ Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: 3
+        width: 4
         color: Theme.primaryColor
         visible: root.selected
     }

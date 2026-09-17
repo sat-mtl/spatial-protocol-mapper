@@ -178,12 +178,9 @@ Pane {
 
                             Rectangle {
                                 required property var model
-                                required property int index
                                 width: root.rowHeaderWidth
                                 height: root.cellHeight
-                                color: index % 2 === 1
-                                       ? Qt.darker(Theme.backgroundColorTertiary, 1.1)
-                                       : Theme.backgroundColorTertiary
+                                color: Theme.backgroundColorTertiary
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -260,12 +257,9 @@ Pane {
 
                             MatrixCell {
                                 required property var model
-                                required property int index
 
                                 width: root.cellWidth
                                 height: root.cellHeight
-                                alternate: root.outputCount > 0
-                                           && Math.floor(index / root.outputCount) % 2 === 1
                                 routed: model.routed
                                 sourceOffset: model.sourceOffset
                                 srcMin: model.srcMin
