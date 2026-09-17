@@ -18,7 +18,7 @@ ApplicationWindow {
 
     width: 1100
     height: 700
-    minimumWidth: 900
+    minimumWidth: 1000
     minimumHeight: 560
     visible: true
     title: "Spatial Protocol Mapper"
@@ -99,10 +99,6 @@ ApplicationWindow {
     // inputs x outputs, row-major, for the matrix grid.
     ListModel { id: matrixModel }
 
-    // Non-empty when two enabled routes write the same source index on some
-    // output; shown as a banner under the matrix.
-    property string collisionSummary: ""
-
     property alias messageMonitor: monitorView.messageMonitor
 
     // Formatting a log line costs more than the routing itself, so it is only
@@ -120,7 +116,6 @@ ApplicationWindow {
     property bool currentInputEnabled: true
     property bool currentInputListening: false
     property string currentInputError: ""
-    property string outputError: ""
     // Reported by the input row; a failed addInput() must not surface down in
     // the outputs section.
     property string inputActionError: ""
@@ -159,22 +154,7 @@ ApplicationWindow {
         Engine.updateOutputList();
         Engine.updateRouteList(currentInputId);
         Engine.updateMatrixList();
-        collisionSummary = buildCollisionSummary();
         syncCurrentInput();
-    }
-
-    function buildCollisionSummary() {
-        const clashing = [];
-        for (let out of outputs) {
-            const cov = Engine.outputCoverage(out.id);
-            if (cov.collision)
-                clashing.push(out.name + " (" + cov.text + ")");
-        }
-        if (clashing.length === 0)
-            return "";
-        return "Two or more routes write the same source index on: "
-             + clashing.join(", ")
-             + ". The later message wins, so one sender will overwrite the other.";
     }
 
     function inputNameOf(id) {
@@ -189,29 +169,19 @@ ApplicationWindow {
 
     // ---- Controller facade ---------------------------------------------- //
 
-    function setListenPort(port) {
-        Engine.setInputPort(currentInputId, port);
+    function updateInput(inputId, props) {
+        Engine.updateInput(inputId, props);
         refresh();
     }
 
-    function setInputProtocol(protocol) {
-        Engine.setInputProtocol(currentInputId, protocol);
+    function setInputListening(inputId, listening) {
+        Engine.setInputListening(inputId, listening);
         refresh();
     }
 
-    function setListening(listening) {
-        Engine.setInputListening(currentInputId, listening);
+    function updateOutput(outputId, props) {
+        Engine.updateOutput(outputId, props);
         refresh();
-    }
-
-    function setInputName(name) {
-        Engine.setInputName(currentInputId, name);
-        refresh();
-    }
-
-    function selectInputByIndex(index) {
-        if (index >= 0 && index < inputs.length)
-            selectInput(inputs[index].id);
     }
 
     // Returns "" on success, or the reason it was refused. With no port, takes
@@ -240,37 +210,34 @@ ApplicationWindow {
         return "";
     }
 
-    function removeCurrentInput() {
+    function removeInput(inputId) {
         // The engine always has somewhere to route from.
         if (inputs.length <= 1)
             return;
-        Engine.removeInput(currentInputId);
-        currentInputId = inputs.length > 0 ? inputs[0].id : -1;
+        Engine.removeInput(inputId);
+        if (currentInputId === inputId)
+            currentInputId = inputs.length > 0 ? inputs[0].id : -1;
         refresh();
     }
 
-    // Returns "" on success, or the reason it was refused.
-    function addOutput(name, host, port, protocol) {
-        name = (name || "").trim();
-        host = (host || "").trim();
-        const portNum = parseInt(port);
+    // Adds a ready-to-edit output for that protocol, on its usual port.
+    function addOutput(protocol) {
+        const defaults = {
+            "SpatGRIS": 18042,
+            "ADM-OSC": 9000,
+            "SPAT Revolution": 8088
+        };
+        let n = 1;
+        for (let o of outputs)
+            if (o.protocol === protocol) n++;
 
-        if (!name)
-            return "Name is required";
-        if (!host)
-            return "Host is required";
-        if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(host) && !/^[a-zA-Z0-9][a-zA-Z0-9.\-]*$/.test(host))
-            return "Invalid host address";
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535)
-            return "Port must be between 1 and 65535";
-
-        const dev = Engine.createOutput(name, host, portNum, protocol);
-        // Adding an output from a given input's view wires it to that input.
+        const dev = Engine.createOutput(protocol + " " + n, "127.0.0.1",
+                                        defaults[protocol] || 8000, protocol);
+        // An output added while looking at an input is wired to it.
         if (currentInputId >= 0)
             Engine.setRoute(currentInputId, dev.id, { enabled: true });
         Engine.saveConfiguration();
         refresh();
-        return "";
     }
 
     function removeOutput(outputId) {
@@ -431,7 +398,7 @@ ApplicationWindow {
                 }
 
                 CustomButton {
-                    text: "EXPERT"
+                    text: "MATRIX"
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing
                     isActive: window.currentViewIndex === window.matrixViewIndex

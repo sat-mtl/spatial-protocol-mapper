@@ -561,102 +561,30 @@ TestCase {
         verify(!Engine.routeAccepts(r, 9), "9 is out of range despite landing at 25");
     }
 
-// ---------------------------------------------------------------- //
-    // outputCoverage — where an output's sources land                   //
     // ---------------------------------------------------------------- //
-    //
-    // outputCoverage reads the `routes` free variable, which resolves against
-    // the window at runtime. The TestCase declares its own so the function can
-    // be driven directly.
+    // parsePort — device fields hand back strings                       //
+    // ---------------------------------------------------------------- //
 
-    property var routes: []
-
-    function span(inputId, outputId, offset, min, max, enabled) {
-        return {
-            inputId: inputId, outputId: outputId,
-            enabled: enabled === undefined ? true : enabled,
-            sourceOffset: offset, srcMin: min, srcMax: max
-        };
+    function test_parse_port_data() {
+        return [
+            { tag: "string",   value: "18032", expected: 18032 },
+            { tag: "number",   value: 18032,   expected: 18032 },
+            { tag: "low",      value: "1",     expected: 1 },
+            { tag: "high",     value: "65535", expected: 65535 },
+            { tag: "zero",     value: "0",     expected: null },
+            { tag: "over",     value: "65536", expected: null },
+            { tag: "negative", value: "-1",    expected: null },
+            { tag: "empty",    value: "",      expected: null },
+            { tag: "words",    value: "abc",   expected: null }
+        ];
+    }
+    // A socket wants a number; null lets the caller keep what it had rather
+    // than binding on NaN.
+    function test_parse_port(row) {
+        compare(Engine.parsePort(row.value), row.expected);
     }
 
-    function coverageOf(routeList) {
-        tc.routes = routeList;
-        return Engine.outputCoverage(1);
-    }
-
-    function test_coverage_of_nothing() {
-        var cov = coverageOf([]);
-        compare(cov.count, 0);
-        compare(cov.text, "");
-        verify(!cov.collision);
-    }
-
-    // An unbounded route starts at source 1 and runs on.
-    function test_coverage_unbounded_reads_as_open_ended() {
-        var cov = coverageOf([span(1, 1, 0, null, null)]);
-        compare(cov.text, "1+");
-        verify(!cov.collision);
-    }
-
-    function test_coverage_unbounded_with_offset() {
-        compare(coverageOf([span(1, 1, 16, null, null)]).text, "17+");
-    }
-
-    // Two senders split by source id, rebased so they do not overlap: the
-    // whole point of the feature, and it must not warn.
-    function test_coverage_disjoint_split_does_not_collide() {
-        var cov = coverageOf([
-            span(1, 1, 0, 1, 8),
-            span(2, 1, 8, 1, 8)     // 1-8 shifted to 9-16
-        ]);
-        compare(cov.count, 2);
-        compare(cov.text, "1\u20138, 9\u201316");
-        verify(!cov.collision, "adjacent but disjoint spans are fine");
-    }
-
-    function test_coverage_overlapping_spans_collide() {
-        var cov = coverageOf([
-            span(1, 1, 0, 1, 8),
-            span(2, 1, 4, 1, 8)     // 5-12 overlaps 1-8
-        ]);
-        verify(cov.collision, "5..8 is written by both senders");
-    }
-
-    // Two unbounded routes always collide -- both start at 1 and never end.
-    function test_coverage_two_unbounded_routes_collide() {
-        verify(coverageOf([span(1, 1, 0, null, null),
-                           span(2, 1, 0, null, null)]).collision);
-    }
-
-    // An open-ended route swallows anything rebased above it.
-    function test_coverage_open_ended_collides_with_later_span() {
-        verify(coverageOf([span(1, 1, 0, 1, null),
-                           span(2, 1, 100, 1, 8)]).collision);
-    }
-
-    function test_coverage_ignores_disabled_routes() {
-        var cov = coverageOf([
-            span(1, 1, 0, 1, 8),
-            span(2, 1, 0, 1, 8, false)
-        ]);
-        compare(cov.count, 1, "a disabled route contributes nothing");
-        verify(!cov.collision);
-    }
-
-    function test_coverage_ignores_other_outputs() {
-        var cov = coverageOf([
-            span(1, 1, 0, 1, 8),
-            span(2, 99, 0, 1, 8)
-        ]);
-        compare(cov.count, 1);
-    }
-
-    // A single source reads as one number rather than "3-3".
-    function test_coverage_single_source_span() {
-        compare(coverageOf([span(1, 1, 0, 3, 3)]).text, "3");
-    }
-
-// ---------------------------------------------------------------- //
+    // ---------------------------------------------------------------- //
     // syncModel — in-place list updates                                 //
     // ---------------------------------------------------------------- //
 

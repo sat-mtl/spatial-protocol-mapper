@@ -3,9 +3,8 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// One output device as seen from a given input: the route to it (on/off,
-// offset, source range) plus the device's own identity. Presentation only —
-// it reports intent through signals and never touches the engine.
+// One output device, and the selected input's route to it. Columns line up
+// with InputRow so the two lists read as one table.
 Rectangle {
     id: root
 
@@ -13,27 +12,34 @@ Rectangle {
     property string host: ""
     property int port: 0
     property string protocol: ""
+    property var protocols: []
+
     property bool routed: true
     property int sourceOffset: 0
     // -1 on either bound means every source.
     property int srcMin: -1
     property int srcMax: -1
-    // Names of the other inputs feeding this output, empty when it is only fed
-    // from here. Without it, unrouting on this tab looks like it did nothing.
+    // The other inputs feeding this output, empty when it is only fed from the
+    // selected one. Without it, unrouting here looks like it did nothing.
     property string alsoFedBy: ""
 
-    readonly property bool rangeIsAll: srcMin < 0 && srcMax < 0
     readonly property string rangeText:
-        rangeIsAll ? "all sources"
-                   : (srcMin < 0 ? "1" : srcMin) + "–" + (srcMax < 0 ? "∞" : srcMax)
+        (srcMin < 0 && srcMax < 0)
+        ? "all sources"
+        : (srcMin < 0 ? "1" : srcMin) + "–" + (srcMax < 0 ? "∞" : srcMax)
+    readonly property string routeText:
+        rangeText + (sourceOffset !== 0 ? "  +" + sourceOffset : "")
 
     signal routedToggled(bool value)
-    signal offsetEdited(int value)
-    signal rangeEditRequested
+    signal nameEdited(string value)
+    signal hostEdited(string value)
+    signal portEdited(string value)
+    signal protocolEdited(string value)
+    signal routeEditRequested
     signal removeRequested
 
     implicitHeight: 52
-    color: root.routed ? Theme.backgroundColorTertiary : Theme.backgroundColorSecondary
+    color: Theme.backgroundColorSecondary
     border.color: Theme.borderColor
     border.width: 1
     radius: Theme.borderRadius
@@ -50,79 +56,60 @@ Rectangle {
         }
 
         ColumnLayout {
-            Layout.preferredWidth: 150
+            Layout.fillWidth: true
+            Layout.minimumWidth: 120
             spacing: 0
 
-            CustomLabel {
-                text: root.name
-                font.bold: true
+            DeviceField {
                 Layout.fillWidth: true
-                elide: Text.ElideRight
+                committed: root.name
+                onCommit: value => root.nameEdited(value)
             }
 
             CustomLabel {
                 visible: root.alsoFedBy !== ""
                 text: "also fed by " + root.alsoFedBy
-                color: Theme.secondaryColor
+                color: Theme.textColorSecondary
                 font.pixelSize: Theme.fontSizeSmall
                 Layout.fillWidth: true
                 elide: Text.ElideRight
             }
         }
 
-        CustomLabel {
-            text: root.protocol
-            color: Theme.primaryColor
-            font.pixelSize: Theme.fontSizeSmall
-            Layout.preferredWidth: 115
-            elide: Text.ElideRight
+        DeviceField {
+            Layout.preferredWidth: 120
+            committed: root.host
+            onCommit: value => root.hostEdited(value)
         }
 
-        CustomLabel {
-            text: root.host + ":" + root.port
-            color: Theme.textColorSecondary
-            font.pixelSize: Theme.fontSizeSmall
-            Layout.fillWidth: true
-            elide: Text.ElideRight
+        DeviceField {
+            Layout.preferredWidth: 80
+            committed: String(root.port)
+            horizontalAlignment: Text.AlignHCenter
+            validator: IntValidator { bottom: 1; top: 65535 }
+            onCommit: value => root.portEdited(value)
         }
 
-        CustomLabel {
-            text: "Sources"
-            color: Theme.textColorSecondary
-            font.pixelSize: Theme.fontSizeSmall
+        CustomComboBox {
+            Layout.preferredWidth: 195
+            model: root.protocols
+            currentIndex: Math.max(0, root.protocols.indexOf(root.protocol))
+            onActivated: root.protocolEdited(currentText)
         }
 
-        CustomButton {
-            Layout.preferredWidth: 110
-            height: Theme.buttonHeight
-            text: root.rangeText
-            // A narrowed range is a real routing decision; make it legible at
-            // a glance rather than hiding it behind the dialog.
-            isActive: !root.rangeIsAll
+        // Source range and offset together: two numbers that only mean
+        // anything side by side, and neither fits the row.
+        RowButton {
+            Layout.preferredWidth: 120
+            text: root.routeText
             enabled: root.routed
             opacity: enabled ? 1.0 : 0.4
-            onClicked: root.rangeEditRequested()
+            onClicked: root.routeEditRequested()
         }
 
-        CustomLabel {
-            text: "Offset"
-            color: Theme.textColorSecondary
-            font.pixelSize: Theme.fontSizeSmall
-        }
-
-        CustomSpinBox {
-            Layout.preferredWidth: 105
-            from: 0
-            to: 9999
-            value: root.sourceOffset
-            enabled: root.routed
-            opacity: enabled ? 1.0 : 0.4
-            onValueModified: root.offsetEdited(value)
-        }
-
-        AccentButton {
+        RowButton {
+            Layout.preferredWidth: 80
             text: "Remove"
-            variant: "danger"
             onClicked: root.removeRequested()
         }
     }
