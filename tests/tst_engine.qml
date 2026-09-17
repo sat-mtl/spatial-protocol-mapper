@@ -561,6 +561,138 @@ TestCase {
         verify(!Engine.routeAccepts(r, 9), "9 is out of range despite landing at 25");
     }
 
+// ---------------------------------------------------------------- //
+    // applyInputScale — per-input axis scaling                          //
+    // ---------------------------------------------------------------- //
+
+    function scaled(sx, sy, sz) {
+        return { id: 1, name: "test", protocol: "Auto", admState: {},
+                 scaleX: sx, scaleY: sy, scaleZ: sz };
+    }
+
+    function norm(command, args) {
+        return { command: command, sourceIndex: 3, args: args };
+    }
+
+    // An unscaled input must keep today's exact values, including the legacy
+    // payload a SpatGRIS output re-emits verbatim.
+    function test_scale_identity_returns_the_same_object() {
+        var n = Engine.parseSpatGRISInput([6, 0.5, 0.25, 0.3, 0.4, 1.5, 0]);
+        var out = Engine.applyInputScale(scaled(1, 1, 1), n);
+        verify(out === n, "identity scaling does not even rebuild the message");
+        verify(out.legacyArgs !== undefined, "and keeps the legacy payload");
+    }
+
+    function test_scale_missing_fields_read_as_identity() {
+        var n = norm("car", [1, 2, 3, 0, 0]);
+        verify(Engine.applyInputScale(newInput(), n) === n);
+    }
+
+    function test_scale_cartesian_per_axis() {
+        var out = Engine.applyInputScale(scaled(2, 0.5, -1), norm("car", [1, 2, 3, 0.4, 0.5]));
+        fuzzyCompare(out.args[0], 2.0, eps);
+        fuzzyCompare(out.args[1], 1.0, eps);
+        fuzzyCompare(out.args[2], -3.0, eps);
+        fuzzyCompare(out.args[3], 0.4, eps, "extents are not positions");
+        fuzzyCompare(out.args[4], 0.5, eps);
+        compare(out.sourceIndex, 3, "the source index is untouched");
+    }
+
+    // A source at the extreme right, mirrored, lands at the extreme left.
+    function test_scale_negative_x_mirrors_azimuth() {
+        var out = Engine.applyInputScale(scaled(-1, 1, 1),
+                                         norm("deg", [90.0, 0.0, 1.0, 0, 0]));
+        fuzzyCompare(out.args[0], -90.0, 1e-6);
+        fuzzyCompare(out.args[1], 0.0, 1e-6, "elevation is unaffected");
+        fuzzyCompare(out.args[2], 1.0, 1e-6, "so is distance");
+    }
+
+    function test_scale_negative_z_mirrors_elevation() {
+        var out = Engine.applyInputScale(scaled(1, 1, -1),
+                                         norm("deg", [30.0, 45.0, 1.0, 0, 0]));
+        fuzzyCompare(out.args[0], 30.0, 1e-6, "azimuth is unaffected");
+        fuzzyCompare(out.args[1], -45.0, 1e-6);
+    }
+
+    // Front/back mirroring is an azimuth reflection about the left-right axis.
+    function test_scale_negative_y_mirrors_front_back() {
+        var out = Engine.applyInputScale(scaled(1, -1, 1),
+                                         norm("deg", [30.0, 0.0, 1.0, 0, 0]));
+        fuzzyCompare(out.args[0], 150.0, 1e-6);
+    }
+
+    // Scaling every axis alike is a distance change and must leave the angles
+    // exactly where they were.
+    function test_scale_uniform_is_a_distance_change() {
+        var out = Engine.applyInputScale(scaled(0.5, 0.5, 0.5),
+                                         norm("deg", [37.0, 21.0, 2.0, 0, 0]));
+        fuzzyCompare(out.args[0], 37.0, 1e-6);
+        fuzzyCompare(out.args[1], 21.0, 1e-6);
+        fuzzyCompare(out.args[2], 1.0, 1e-6);
+    }
+
+    // The radian form scales the same way, in radians.
+    function test_scale_polar_stays_in_radians() {
+        var out = Engine.applyInputScale(scaled(-1, 1, 1),
+                                         norm("pol", [halfPi, 0.0, 1.0, 0, 0]));
+        compare(out.command, "pol");
+        fuzzyCompare(out.args[0], -halfPi, 1e-6);
+    }
+
+    // A legacy message parses to "pol"; scaling it has to drop the verbatim
+    // payload, or a SpatGRIS output would re-emit the unscaled position and
+    // silently ignore the scaling.
+    function test_scale_drops_the_legacy_passthrough() {
+        var n = Engine.parseSpatGRISInput([6, 0.5, 0.25, 0.3, 0.4, 1.5, 0]);
+        verify(n.legacyArgs !== undefined, "precondition");
+        var out = Engine.applyInputScale(scaled(-1, 1, 1), n);
+        verify(out.legacyArgs === undefined,
+               "a scaled legacy message cannot be passed through unchanged");
+
+        // And the mapper therefore builds a normal command for it.
+        var msgs = Engine.mapForSpatGRIS(out.command, out.sourceIndex, out.args, out);
+        compare(msgs[0].value[0], "pol");
+    }
+
+    // Commands that carry no position are left alone.
+    function test_scale_ignores_positionless_commands_data() {
+        return [
+            { tag: "clr", command: "clr", args: [] },
+            { tag: "alg", command: "alg", args: ["dome"] }
+        ];
+    }
+    function test_scale_ignores_positionless_commands(row) {
+        var n = norm(row.command, row.args);
+        verify(Engine.applyInputScale(scaled(-1, 2, 3), n) === n);
+    }
+
+    // Scaling a source sitting at the origin must not produce NaN through
+    // asin(0/0).
+    function test_scale_at_the_origin_is_finite() {
+        var out = Engine.applyInputScale(scaled(0, 0, 0), norm("deg", [45.0, 10.0, 1.0, 0, 0]));
+        fuzzyCompare(out.args[0], 0.0, eps);
+        fuzzyCompare(out.args[1], 0.0, eps);
+        fuzzyCompare(out.args[2], 0.0, eps);
+    }
+
+    // The scale is a property of the input, so two inputs scale independently.
+    function test_scale_is_per_input() {
+        var a = Engine.applyInputScale(scaled(-1, 1, 1), norm("car", [1, 2, 3, 0, 0]));
+        var b = Engine.applyInputScale(scaled(1, 1, 1), norm("car", [1, 2, 3, 0, 0]));
+        fuzzyCompare(a.args[0], -1.0, eps);
+        fuzzyCompare(b.args[0], 1.0, eps);
+    }
+
+    // Round trip: scale then unscale returns the original position.
+    function test_scale_round_trips_through_its_inverse() {
+        var once = Engine.applyInputScale(scaled(-2, 0.5, -1),
+                                          norm("deg", [37.0, 21.0, 1.4, 0, 0]));
+        var back = Engine.applyInputScale(scaled(-0.5, 2, -1), once);
+        fuzzyCompare(back.args[0], 37.0, 1e-6);
+        fuzzyCompare(back.args[1], 21.0, 1e-6);
+        fuzzyCompare(back.args[2], 1.4, 1e-6);
+    }
+
     // ---------------------------------------------------------------- //
     // parsePort — device fields hand back strings                       //
     // ---------------------------------------------------------------- //

@@ -7,6 +7,7 @@ MonitorView            Views/MonitorView.qml
 
 # Presentation-only building blocks
 singleton Columns      Components/Columns.qml
+singleton ScaleFormat  Components/ScaleFormat.qml
 SectionHeader          Components/SectionHeader.qml
 TableHeader            Components/TableHeader.qml
 OutputRow              Components/OutputRow.qml
@@ -14,4 +15,5 @@ DeviceField            Components/DeviceField.qml
 RowButton              Components/RowButton.qml
 InputRow               Components/InputRow.qml
 RouteEditDialog        Components/RouteEditDialog.qml
+InputScaleDialog       Components/InputScaleDialog.qml
 MatrixCell             Components/MatrixCell.qml

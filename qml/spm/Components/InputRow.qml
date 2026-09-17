@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
@@ -15,6 +16,9 @@ Rectangle {
     property bool listening: false
     property string error: ""
     property var protocols: []
+    property real scaleX: 1
+    property real scaleY: 1
+    property real scaleZ: 1
     // Which input the outputs table is showing routes for.
     property bool selected: false
 
@@ -22,6 +26,7 @@ Rectangle {
     signal nameEdited(string value)
     signal portEdited(string value)
     signal protocolEdited(string value)
+    signal scaleEditRequested
     signal removeRequested
     signal selectRequested
 
@@ -71,11 +76,15 @@ Rectangle {
 
         CustomLabel {
             Layout.preferredWidth: Columns.host
-            text: "any address"
-            color: Theme.textColorSecondary
+            text: root.error !== "" ? root.error : "any address"
+            color: root.error !== "" ? Theme.errorColor : Theme.textColorSecondary
             font.pixelSize: Theme.fontSizeSmall
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
+
+            ToolTip.visible: root.error !== "" && errorHover.hovered
+            ToolTip.text: root.error
+            HoverHandler { id: errorHover }
         }
 
         DeviceField {
@@ -93,14 +102,10 @@ Rectangle {
             onActivated: root.protocolEdited(currentText)
         }
 
-        CustomLabel {
+        RowButton {
             Layout.preferredWidth: Columns.route
-            text: root.error
-            color: Theme.errorColor
-            font.pixelSize: Theme.fontSizeSmall
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            elide: Text.ElideRight
+            text: ScaleFormat.summary(root.scaleX, root.scaleY, root.scaleZ)
+            onClicked: root.scaleEditRequested()
         }
 
         RowButton {

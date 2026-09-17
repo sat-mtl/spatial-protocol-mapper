@@ -33,10 +33,12 @@ CONF = os.path.expanduser("~/.config/ossia/score.conf")
 
 PORT_A = 18032          # first input
 PORT_B = 18033          # second input, for the isolation checks
+PORT_C = 18034          # third input, carrying a non-identity scale
 SINK_SPATGRIS = 19001   # every source
 SINK_ADM = 19002        # every source, offset +16
 SINK_RANGED = 19003     # sources 1..8 only
 SINK_FROM_B = 19004     # fed from the second input only
+SINK_SCALED = 19005     # fed from the scaled input
 ADM_OFFSET = 16
 
 
@@ -169,6 +171,10 @@ def seed_v2():
         "version": 2,
         "inputs": [
             {"id": 1, "name": "A", "protocol": "Auto", "port": PORT_A, "enabled": True},
+            # Mirrored left/right and halved in depth, to prove the input scale
+            # reaches the wire through both coordinate families.
+            {"id": 3, "name": "C", "protocol": "Auto", "port": PORT_C,
+             "enabled": True, "scaleX": -1, "scaleY": 0.5, "scaleZ": 1},
             {"id": 2, "name": "B", "protocol": "Auto", "port": PORT_B, "enabled": True},
         ],
         "outputs": [
@@ -180,6 +186,8 @@ def seed_v2():
              "host": "127.0.0.1", "port": SINK_RANGED},
             {"id": 13, "name": "fromB", "protocol": "SpatGRIS",
              "host": "127.0.0.1", "port": SINK_FROM_B},
+            {"id": 14, "name": "scaled", "protocol": "SpatGRIS",
+             "host": "127.0.0.1", "port": SINK_SCALED},
         ],
         "routes": [
             {"inputId": 1, "outputId": 10, "enabled": True,
@@ -194,6 +202,8 @@ def seed_v2():
              "sourceOffset": 0, "srcMin": None, "srcMax": None},
             {"inputId": 2, "outputId": 13, "enabled": True,
              "sourceOffset": 100, "srcMin": None, "srcMax": None},
+            {"inputId": 3, "outputId": 14, "enabled": True,
+             "sourceOffset": 0, "srcMin": None, "srcMax": None},
         ],
     }
     write_section(
@@ -294,7 +304,7 @@ def test_routing():
     print("\n=== routing, with a v2 configuration ===")
     seed_v2()
     sinks = {p: Sink(p) for p in
-             (SINK_SPATGRIS, SINK_ADM, SINK_RANGED, SINK_FROM_B)}
+             (SINK_SPATGRIS, SINK_ADM, SINK_RANGED, SINK_FROM_B, SINK_SCALED)}
     for s in sinks.values():
         s.start()
     try:
@@ -384,6 +394,35 @@ def test_routing():
                 expect(close(a_sg[0][2:5], [0.5, 0.2, 0.3]),
                        "A keeps its own y and z — accumulators are per input",
                        f"got {a_sg[0]}")
+
+            # -- per-input scaling ----------------------------------------
+            print("\n/spat/serv car 1 1 2 0 0 0   -> input C (x mirrored, y halved)")
+            for s2 in sinks.values():
+                s2.clear()
+            send(PORT_C, "/spat/serv", ["car", 1, 1.0, 2.0, 0.0, 0.0, 0.0])
+
+            sc = sinks[SINK_SCALED].find("/spat/serv")
+            expect(len(sc) == 1, "the scaled input reaches its output",
+                   f"got {sinks[SINK_SCALED].messages}")
+            if sc:
+                expect(close(sc[0], ["car", 1, -1.0, 1.0, 0.0, 0.0, 0.0]),
+                       "x is mirrored and y is halved on the wire", f"got {sc[0]}")
+
+            print("\n/spat/serv deg 1 90 0 1 0 0   -> input C (polar family)")
+            for s2 in sinks.values():
+                s2.clear()
+            send(PORT_C, "/spat/serv", ["deg", 1, 90.0, 0.0, 1.0, 0.0, 0.0])
+
+            sc = sinks[SINK_SCALED].find("/spat/serv")
+            expect(len(sc) == 1, "a polar message from the scaled input arrives",
+                   f"got {sinks[SINK_SCALED].messages}")
+            if sc:
+                expect(close(sc[0][2:5], [-90.0, 0.0, 1.0], tol=1e-2),
+                       "the extreme right becomes the extreme left", f"got {sc[0]}")
+
+            expect(not sinks[SINK_SPATGRIS].messages,
+                   "the scale belongs to its own input only",
+                   f"got {sinks[SINK_SPATGRIS].messages}")
     finally:
         for s in sinks.values():
             s.stop()
@@ -405,6 +444,10 @@ def test_v1_migration():
     expect(cfg.get("version") == 2, "it is tagged version 2", f"got {cfg.get('version')}")
     expect(len(cfg["inputs"]) == 1, "the implicit input becomes one real input",
            f"got {cfg['inputs']}")
+    expect(cfg["inputs"][0].get("scaleX") == 1
+           and cfg["inputs"][0].get("scaleY") == 1
+           and cfg["inputs"][0].get("scaleZ") == 1,
+           "a migrated input is unscaled", f"got {cfg['inputs'][0]}")
     expect(cfg["inputs"][0]["port"] == PORT_A,
            "it keeps the old listen port", f"got {cfg['inputs'][0]}")
     expect(cfg["inputs"][0].get("enabled") is True,
