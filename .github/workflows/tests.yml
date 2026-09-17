@@ -1,0 +1,54 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, master, dev, develop ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  qml-tests:
+    name: QML tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # QtTest pulls in QtQuick.Window and QtQml.WorkerScript; qmllint needs
+      # QtCore for Settings.
+      - name: Install Qt6 QML tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            qt6-declarative-dev-tools \
+            libqt6svg6 \
+            qml6-module-qtquick \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-templates \
+            qml6-module-qtquick-layouts \
+            qml6-module-qtquick-window \
+            qml6-module-qtquick-dialogs \
+            qml6-module-qtcore \
+            qml6-module-qtqml \
+            qml6-module-qtqml-workerscript \
+            qml6-module-qttest
+
+      - name: qmltestrunner (hard gate)
+        run: |
+          RUNNER=/usr/lib/qt6/bin/qmltestrunner
+          [ -x "$RUNNER" ] || RUNNER=$(command -v qmltestrunner)
+          QT_QPA_PLATFORM=offscreen "$RUNNER" -import qml -input tests/
+
+      # Informational: qmllint cannot see the ossia/score runtime.
+      - name: qmllint
+        continue-on-error: true
+        run: |
+          QMLLINT=/usr/lib/qt6/bin/qmllint
+          [ -x "$QMLLINT" ] || QMLLINT=$(command -v qmllint)
+          for f in qml/*.qml qml/spm/Views/*.qml qml/spm/Components/*.qml; do
+            [ -e "$f" ] || continue
+            echo "::group::$f"
+            QT_QPA_PLATFORM=offscreen "$QMLLINT" -I qml --unqualified info "$f" || true
+            echo "::endgroup::"
+          done

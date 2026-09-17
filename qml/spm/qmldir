@@ -1,0 +1,19 @@
+module spm
+
+# Views (one per sidebar tab)
+RoutingView            Views/RoutingView.qml
+MatrixView             Views/MatrixView.qml
+MonitorView            Views/MonitorView.qml
+
+# Presentation-only building blocks
+singleton Columns      Components/Columns.qml
+singleton Format       Components/Format.qml
+SectionHeader          Components/SectionHeader.qml
+TableHeader            Components/TableHeader.qml
+OutputRow              Components/OutputRow.qml
+DeviceField            Components/DeviceField.qml
+RowButton              Components/RowButton.qml
+InputRow               Components/InputRow.qml
+RouteEditDialog        Components/RouteEditDialog.qml
+InputScaleDialog       Components/InputScaleDialog.qml
+MatrixCell             Components/MatrixCell.qml
