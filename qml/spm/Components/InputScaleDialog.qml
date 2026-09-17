@@ -4,10 +4,8 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Per-input axis scaling: corrects a sender whose room is a different size, or
-// whose axes are mirrored relative to ours.
-//
-// Applies to every message from that input, before any route sees it.
+// Per-input axis scaling. Applies to every message from that input, before
+// any route sees it.
 Dialog {
     id: root
 

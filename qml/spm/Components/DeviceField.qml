@@ -1,13 +1,11 @@
 import QtQuick
 import ca.qc.sat.qmlcomponents
 
-// A field in a device row. Commits on Enter or on losing focus, never on every
-// keystroke — a port is not a valid port halfway through being typed.
+// Commits on Enter or focus loss, not per keystroke.
 CustomTextField {
     id: root
 
-    // The stored value. Typing detaches the field from it; it is reapplied
-    // when the model changes underneath, and on losing focus.
+    // Typing detaches the field from this; reset() reattaches it.
     property string committed: ""
 
     signal commit(string value)
@@ -15,7 +13,7 @@ CustomTextField {
     text: committed
     onCommittedChanged: if (!activeFocus) reset()
 
-    // Without the rewind, a name longer than the field sits scrolled to its end.
+    // cursorPosition: a name longer than the field otherwise shows its tail.
     function reset() {
         text = committed;
         cursorPosition = 0;

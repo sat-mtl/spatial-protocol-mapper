@@ -2,9 +2,7 @@
 
 // Routing engine.
 //
-// The model is a matrix: any number of inputs, any number of outputs, and an
-// explicit route for each connection between them. Basic mode is the special
-// case of one input, not a separate code path.
+// Any number of inputs and outputs, with an explicit route per connection.
 //
 //   inputs  [{ id, name, protocol, port, listening, error, udp, osc, admState }]
 //   outputs [{ id, name, protocol, host, port, udp }]
@@ -15,8 +13,7 @@
 // numbers in the UI match the numbers on the sender.
 //
 // Free variables (inputs, outputs, routes, appSettings, the list models,
-// messageMonitor, monitorActive, Protocols) resolve against Main.qml, which is
-// the only file that imports this script.
+// messageMonitor, monitorActive, Protocols) resolve against Main.qml.
 
 // ----- Identity --------------------------------------------------------- //
 // Routes reference devices by id, so ids must outlive any array position.
@@ -45,8 +42,7 @@ function findRoute(inputId, outputId) {
 }
 
 // ----- Dispatch index --------------------------------------------------- //
-// Rebuilt on every structural change so the message path is a lookup and a
-// loop rather than a scan of every route with a findOutput() inside it.
+// Rebuilt on every structural change; the message path only reads it.
 var g_linksByInput = {};
 
 function reindexRoutes() {
@@ -61,9 +57,8 @@ function reindexRoutes() {
     }
 }
 
-// A range filter is about sources. Commands that carry no source index — a
-// global command, /adm/lis, /adm/env, anything forwarded verbatim — would
-// otherwise be silenced on every filtered route, so they bypass it.
+// Messages with no source index (/adm/lis, /adm/env, global commands, anything
+// forwarded verbatim) bypass the filter rather than being silenced by it.
 function routeAccepts(route, sourceIndex) {
     if (sourceIndex < 0) return true;
     if (route.srcMin !== null && route.srcMin !== undefined && sourceIndex < route.srcMin)
@@ -178,10 +173,8 @@ function forwardAdmRaw(inp, links, address, value) {
 }
 
 // ----- Per-input scaling ------------------------------------------------ //
-// Corrects a sender whose room is a different size, or whose axes are mirrored
-// relative to ours: a negative factor flips that axis. Applied once, on the
-// canonical form, before any route sees the message, so every output fed by an
-// input agrees on where the source is.
+// A negative factor mirrors that axis. Applied to the canonical form before
+// any route sees the message.
 //
 // SpatGRIS convention: azimuth is measured from the front (+y) toward the
 // right (+x), elevation from the horizon toward +z.
@@ -208,8 +201,7 @@ function inputHasScale(inp) {
         || scaleOf(inp, "scaleZ") !== 1;
 }
 
-// Returns the message it was given when the scale is identity, so an unscaled
-// input keeps its exact values.
+// Returns the message unchanged when the scale is identity.
 function applyInputScale(inp, norm) {
     if (!norm || !inputHasScale(inp)) return norm;
 
@@ -218,8 +210,8 @@ function applyInputScale(inp, norm) {
     const sz = scaleOf(inp, "scaleZ");
     const a = norm.args;
 
-    // `legacyArgs` is deliberately not carried over: a SpatGRIS output re-emits
-    // it verbatim, which would put the unscaled position on the wire.
+    // `legacyArgs` is not carried over: a SpatGRIS output re-emits it verbatim,
+    // which would put the unscaled position on the wire.
     switch (norm.command) {
     case "car":
         if (a.length < 3) return norm;
@@ -282,9 +274,8 @@ function parseSpatGRISInput(value) {
 // incoming update. The last coordinate family written (polar vs cartesian)
 // determines whether we emit a "deg" or "car" command downstream.
 //
-// The accumulator belongs to the input device: two ADM senders on different
-// ports address their own source 1, and a shared table would let one overwrite
-// the other's coordinates.
+// The accumulator belongs to the input device: two ADM senders each address
+// their own source 1.
 function getAdmSource(inp, n) {
     if (!inp.admState)
         inp.admState = {};
@@ -385,12 +376,9 @@ function parseADMInput(inp, address, value) {
 }
 
 // ----- Input parsing: /source/{n}/… (SPAT Revolution) ------------------- //
-// The mirror of mapForSPAT, so a SPAT source round-trips unchanged: azimuth
-// keeps the SpatGRIS sign (SPAT shares it), radius arrives as a percentage,
-// and spread is one figure that fills both extents.
-//
-// Like ADM, SPAT sends one parameter per message, so the accumulator lives on
-// the input device.
+// The mirror of mapForSPAT: azimuth keeps the SpatGRIS sign, radius arrives as
+// a percentage, spread is one figure filling both extents. One parameter per
+// message, so the accumulator lives on the input device.
 function getSpatSource(inp, n) {
     if (!inp.spatState)
         inp.spatState = {};
@@ -644,9 +632,7 @@ function closeInput(inp) {
 function openInput(inp) {
     closeInput(inp);
 
-    // Deferred so a socket being rebound on the same port has actually been
-    // released before we bind again. Each closure captures its own device;
-    // nothing here touches shared state.
+    // Deferred so a socket rebound on the same port has been released first.
     Qt.callLater(function () {
         // A pending callLater cannot be cancelled, so re-check that the device
         // still exists, is still wanted, and has not already been bound.
@@ -686,8 +672,7 @@ function openInput(inp) {
     });
 }
 
-// Two inputs cannot share a port; the second bind fails at the OS level and
-// the app would show a listening device that never receives anything.
+// The second bind on a shared port fails at the OS level.
 function portInUse(port, exceptId) {
     for (let i of inputs)
         if (i.port === port && i.id !== exceptId) return true;
@@ -719,8 +704,7 @@ function removeInput(id) {
         if (inputs[i].id !== id) continue;
         closeInput(inputs[i]);
         inputs.splice(i, 1);
-        // Drop the routes that hung off it, or reindexRoutes would keep
-        // dispatching through a device that no longer exists.
+        // Routes referencing it would keep resolving.
         routes = routes.filter(function (r) { return r.inputId !== id; });
         reindexRoutes();
         updateInputList();
@@ -823,8 +807,7 @@ function createOutput(name, host, port, protocol) {
     return dev;
 }
 
-// Fields are edited directly in the list; host and port changes have to
-// reopen the socket, the rest are labels.
+// Host and port changes reopen the socket; the rest are labels.
 function updateOutput(id, props) {
     const out = findOutput(id);
     if (!out) return;
@@ -891,8 +874,7 @@ function setRoute(inputId, outputId, props) {
     return r;
 }
 
-// Row-major (one input at a time), which is the order the matrix grid lays
-// its cells out in.
+// Row-major, matching the order the matrix grid lays its cells out in.
 function updateMatrixList() {
     const rows = [];
     for (let inp of inputs) {
@@ -914,10 +896,8 @@ function updateMatrixList() {
 // ----- List models ------------------------------------------------------- //
 // The engine keeps plain JS arrays; the views bind to these.
 
-// Rebuilding a ListModel destroys every delegate: the matrix would flicker on
-// each click, lose hover, and reset its scroll position. Patch in place while
-// the rows still describe the same things, and only rebuild when the shape
-// actually changed.
+// Rebuilding a ListModel destroys every delegate, losing hover and scroll
+// position. Patch in place while the row identities hold.
 function syncModel(model, rows, identity) {
     let sameShape = (model.count === rows.length);
     if (sameShape) {
@@ -962,8 +942,8 @@ function updateInputList() {
         });
     }
     syncModel(inputListModel, rows, ["inputId"]);
-    // openInput() binds through Qt.callLater, so the listening flag settles
-    // after the call that requested it; the window mirrors it from here.
+    // openInput() binds through Qt.callLater, so the flag settles after the
+    // call that requested it.
     syncCurrentInput();
 }
 
@@ -1042,9 +1022,8 @@ function restoreConfiguration() {
     if (cfg && cfg.version === 2 && cfg.inputs && cfg.inputs.length > 0) {
         restoreV2(cfg);
     } else if (raw !== "") {
-        // Stored but unusable. Come up with a working default and leave the
-        // stored bytes alone: migrateFromV1() ends in saveConfiguration(),
-        // which would overwrite them with a v1-derived guess.
+        // Stored but unusable. migrateFromV1() ends in saveConfiguration(), which
+        // would overwrite it, so leave the stored bytes alone.
         console.log("Saved configuration unusable; keeping the stored copy.");
         createInput("Input 1", appSettings.listenPort, "Auto");
     } else {
@@ -1056,9 +1035,8 @@ function restoreConfiguration() {
     updateOutputList();
 }
 
-// Devices are addressed by id, so an entry without one, or sharing one, cannot
-// be restored. An undefined id would also make g_nextId NaN, and NaN never
-// compares equal to itself.
+// Devices are addressed by id. An undefined id also makes g_nextId NaN, which
+// never compares equal to itself.
 function usableDevices(list) {
     const seen = {};
     const out = [];
@@ -1127,11 +1105,9 @@ function restoreV2(cfg) {
     }
 }
 
-// v1 was a single implicit input plus a flat list of outputs, each carrying
-// its own offset and an `active` flag, with every output fed from that input.
-// That maps exactly onto one input and one route per output. The v1 keys are
-// left in place rather than deleted — they cost nothing and a user who rolls
-// back keeps their setup.
+// v1 was one implicit input and a flat output list, each output carrying its
+// own offset and `active` flag. The v1 keys are left in place so a rollback
+// keeps its setup.
 function migrateFromV1() {
     const inp = createInput("Input 1", appSettings.listenPort, "Auto");
 

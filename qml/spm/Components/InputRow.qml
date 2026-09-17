@@ -4,9 +4,8 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// One row of the inputs table. Columns come from Columns so the header and the
-// outputs table line up with it; inputs bind on every interface, so their
-// address cell is empty and the route cell carries the bind error.
+// One row of the inputs table. Inputs bind on every interface, so the address
+// cell carries the bind error instead.
 Rectangle {
     id: root
 
@@ -33,8 +32,6 @@ Rectangle {
     implicitHeight: 48
     color: Theme.backgroundColorSecondary
 
-    // Shared edges: only the bottom rule, so consecutive rows read as a table
-    // rather than as a stack of cards.
     Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
@@ -43,7 +40,6 @@ Rectangle {
         color: Theme.separatorColor
     }
 
-    // The selected input is what the outputs table below refers to.
     Rectangle {
         anchors.left: parent.left
         anchors.top: parent.top

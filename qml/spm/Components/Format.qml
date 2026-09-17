@@ -1,11 +1,10 @@
 pragma Singleton
 import QtQuick
 
-// One way of writing a route or a scale, shared by the rows, the cells and the
-// dialogs, so no two of them can describe the same thing differently.
+// Route and scale summaries, shared by the rows, the cells and the dialogs.
 QtObject {
-    // 1.000 -> "1", 0.500 -> "0.5". toFixed always leaves a decimal point, so
-    // the trailing-zero strip cannot eat the zeros of a round number.
+    // toFixed always leaves a decimal point, so the strip cannot eat the
+    // zeros of a round number: 100.000 -> "100", not "1".
     function number(v) {
         return Number(v).toFixed(3).replace(/\.?0+$/, "");
     }
@@ -37,8 +36,7 @@ QtObject {
         return range(min, max) + (offset !== 0 ? "  +" + offset : "");
     }
 
-    // Only what differs from the default, for somewhere with no room to spell
-    // out a route that is not doing anything unusual.
+    // Only what differs from the default.
     function annotation(min, max, offset) {
         const ranged = (min >= 0 || max >= 0);
         if (!ranged && offset === 0)

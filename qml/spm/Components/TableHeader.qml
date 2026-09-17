@@ -3,13 +3,11 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Column titles for a device table. Mirrors the row layout exactly — same
-// widths from Columns, same margins — so the two line up by construction.
+// Column titles for a device table. Same widths and margins as the rows.
 Item {
     id: root
 
-    // Inputs have no address of their own and outputs have no bind state, so
-    // each table labels the two variable columns itself.
+    // The two columns each table labels differently.
     property string hostTitle: ""
     property string routeTitle: ""
 

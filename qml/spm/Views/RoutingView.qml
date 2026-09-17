@@ -45,8 +45,8 @@ Pane {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: inputHeader.height + inputList.contentHeight + 2
-            Layout.maximumHeight: inputHeader.height + 4 * 48 + 2
+            Layout.preferredHeight: inputHeader.height + 1 + inputList.contentHeight + 2
+            Layout.maximumHeight: inputHeader.height + 1 + 4 * 48 + 2
             color: Theme.backgroundColor
             border.color: Theme.borderColor
             border.width: 1
