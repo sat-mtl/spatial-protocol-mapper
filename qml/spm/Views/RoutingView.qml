@@ -71,10 +71,8 @@ Pane {
 
                     delegate: InputRow {
                         required property var model
-                        required property int index
 
                         width: ListView.view ? ListView.view.width : 0
-                        alternate: index % 2 === 1
                         name: model.name
                         port: model.port
                         protocol: model.protocol
@@ -157,10 +155,8 @@ Pane {
 
                     delegate: OutputRow {
                         required property var model
-                        required property int index
 
                         width: ListView.view ? ListView.view.width : 0
-                        alternate: index % 2 === 1
                         name: model.name
                         host: model.host
                         port: model.port

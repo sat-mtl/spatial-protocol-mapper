@@ -17,7 +17,6 @@ Rectangle {
     property int srcMax: -1
     property string inputName: ""
     property string outputName: ""
-    property bool alternate: false
 
     readonly property bool ranged: srcMin >= 0 || srcMax >= 0
     readonly property string rangeText:
@@ -29,8 +28,7 @@ Rectangle {
 
     color: routed ? Theme.buttonBgActive
          : hover.hovered ? Theme.backgroundColorTertiary
-         : alternate ? Qt.darker(Theme.backgroundColorSecondary, 1.12)
-                     : Theme.backgroundColorSecondary
+                         : Theme.backgroundColorSecondary
 
     Behavior on color {
         ColorAnimation { duration: Theme.animationDuration / 2 }
