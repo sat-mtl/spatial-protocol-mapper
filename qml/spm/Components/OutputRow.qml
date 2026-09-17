@@ -79,8 +79,6 @@ Rectangle {
             onActivated: root.protocolEdited(currentText)
         }
 
-        // Source range and offset together: two numbers that only mean
-        // anything side by side, and neither fits the row.
         RowButton {
             Layout.preferredWidth: Columns.route
             text: root.routeText

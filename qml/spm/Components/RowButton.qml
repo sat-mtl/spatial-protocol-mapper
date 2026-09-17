@@ -1,8 +1,8 @@
 import QtQuick
 import ca.qc.sat.qmlcomponents
 
-// CustomButton rests at the sidebar colour, which is also the device-row
-// colour. One step lighter, with the hover it loses by overriding that.
+// CustomButton at the sidebar colour is invisible on a device row. One step
+// lighter, re-adding the hover that overriding `color` removes.
 CustomButton {
     id: root
 

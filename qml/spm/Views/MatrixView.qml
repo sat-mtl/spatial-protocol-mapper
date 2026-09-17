@@ -4,14 +4,13 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Every input against every output, as one gridded table. Same model as the
-// routing view.
+// Every input against every output. Same model as the routing view.
 Pane {
     id: root
 
     required property var controller
 
-    // Wide enough for a name read straight, rather than turned on its side.
+    // Wide enough to read an output name horizontally.
     readonly property int cellWidth: 132
     readonly property int cellHeight: 48
     readonly property int rowHeaderWidth: 220
@@ -45,9 +44,7 @@ Pane {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // The frame hugs the table: a matrix of three inputs does not want
-            // a border drawn round half a window of nothing. It grows to the
-            // space available and scrolls past it.
+            // Sized to the table, capped at the space available.
             Rectangle {
                 id: frame
                 width: Math.min(parent.width,

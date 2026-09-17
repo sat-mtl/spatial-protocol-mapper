@@ -3,11 +3,8 @@ import QtQuick.Controls.Basic
 import ca.qc.sat.qmlcomponents
 import spm
 
-// One input-to-output connection. Square-cornered and gapless: adjacent cells
-// share their rules, so the grid reads as a table rather than as loose tiles.
-//
-// Connected uses the same green as the switches in the lists, so "on" looks the
-// same everywhere.
+// One input-to-output connection. Square-cornered and gapless so adjacent
+// cells share their rules.
 Rectangle {
     id: root
 
@@ -20,8 +17,6 @@ Rectangle {
     property string outputName: ""
 
     readonly property bool ranged: srcMin >= 0 || srcMax >= 0
-    // Shown in the cell only when it is not the default, so a plain connection
-    // stays a plain connection.
     readonly property bool annotated: routed && (ranged || sourceOffset !== 0)
     readonly property string routeText: Format.route(srcMin, srcMax, sourceOffset)
     readonly property string cellText: Format.annotation(srcMin, srcMax, sourceOffset)
@@ -37,8 +32,7 @@ Rectangle {
         ColorAnimation { duration: Theme.animationDuration / 2 }
     }
 
-    // Right, then up: the turn is what reads as routing, and no font is
-    // guaranteed to carry the glyph.
+    // Drawn rather than a glyph: no font is guaranteed to carry it.
     Canvas {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
@@ -76,8 +70,6 @@ Rectangle {
         }
     }
 
-    // A narrowed range or an offset changes what the arrow means, so it is
-    // spelled out rather than coded into a corner mark.
     Text {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom

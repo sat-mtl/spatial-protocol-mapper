@@ -6,25 +6,23 @@ import ca.qc.sat.qmlcomponents
 import spm
 import "spm/Engine.js" as Engine
 
-// Spatial Protocol Mapper — entry point and controller facade.
+// Entry point and controller facade.
 //
-// Engine.js is imported *here only*. It is not a `.pragma library`, so every
-// QML file that imports it would otherwise get its own copy of the module
-// state (the log drain budget, the dispatch index) while sharing the window's
-// properties — two engines pretending to be one. The views therefore call the
-// functions below instead of reaching into Engine directly.
+// Engine.js is imported here only: it is not a `.pragma library`, so a second
+// importer would get its own copy of the module state. The views call the
+// functions below instead.
 ApplicationWindow {
     id: window
 
     width: 1100
     height: 700
-    minimumWidth: 1000
+    // The view's own margins, plus the 1px frame each table draws.
+    minimumWidth: Theme.sidebarWidth + 2 * Theme.padding + 2 + Columns.minimumRowWidth
     minimumHeight: 560
     visible: true
     title: "Spatial Protocol Mapper"
 
-    // Category kept as-is: renaming it would silently orphan every existing
-    // user's saved devices.
+    // Renaming the category orphans every existing user's saved devices.
     Settings {
         id: appSettings
         category: "OSCRouter"
@@ -34,8 +32,8 @@ ApplicationWindow {
         property int monitorMaxRate: 500 // max log lines per second displayed
         property int lastViewIndex: 0
 
-        // v2: the whole routing matrix. v1's listenPort + savedOutputDevices
-        // are read once by Engine.migrateFromV1() and then left alone.
+        // v1's listenPort and savedOutputDevices are read once by
+        // Engine.migrateFromV1() and then left alone.
         property string savedConfiguration: ""
         property int listenPort: 18032
         property string savedOutputDevices: "[]"
@@ -80,9 +78,8 @@ ApplicationWindow {
     property alias settings: appSettings
 
     // ---- Engine state -------------------------------------------------- //
-    // Free variables in Engine.js resolve against this object's context.
-    // Plain arrays: the engine mutates them, the list models below are what
-    // the views bind to.
+    // Free variables in Engine.js resolve against this object's context. The
+    // engine mutates these; the views bind to the list models below.
     property var inputs: []
     property var outputs: []
     property var routes: []
@@ -101,13 +98,11 @@ ApplicationWindow {
 
     property alias messageMonitor: monitorView.messageMonitor
 
-    // Formatting a log line costs more than the routing itself, so it is only
-    // done while the monitor is on screen.
+    // Formatting a log line costs more than the routing, so it is gated.
     readonly property bool monitorActive: currentViewIndex === monitorViewIndex
 
     // ---- Current input -------------------------------------------------- //
-    // The basic view edits one input at a time. These mirror it as bindable
-    // properties, because the engine's state is plain JS with no notifiers.
+    // Bindable mirrors: the engine's state is plain JS with no notifiers.
     property int currentInputId: -1
     property int currentInputIndex: 0
     property string currentInputName: ""
@@ -116,8 +111,7 @@ ApplicationWindow {
     property bool currentInputEnabled: true
     property bool currentInputListening: false
     property string currentInputError: ""
-    // Reported by the input row; a failed addInput() must not surface down in
-    // the outputs section.
+    // Reported by the input row.
     property string inputActionError: ""
 
     function syncCurrentInput() {
@@ -148,7 +142,6 @@ ApplicationWindow {
         Engine.updateRouteList(currentInputId);
     }
 
-    // Everything that can change what the views show, in one place.
     function refresh() {
         Engine.updateInputList();
         Engine.updateOutputList();
@@ -185,7 +178,7 @@ ApplicationWindow {
     }
 
     // Returns "" on success, or the reason it was refused. With no port, takes
-    // the next free one above those in use, so adding an input is one click.
+    // the next free one above those in use.
     function addInput(port) {
         let portNum = parseInt(port);
         if (isNaN(portNum)) {
@@ -198,8 +191,7 @@ ApplicationWindow {
         }
         if (portNum < 1 || portNum > 65535)
             return "Port must be between 1 and 65535";
-        // Two inputs on one port means the second bind fails at the OS level
-        // and the app shows a device that never receives anything.
+        // Two inputs on one port: the second bind fails at the OS level.
         if (Engine.portInUse(portNum, -1))
             return "Port " + portNum + " is already used by another input";
 
@@ -211,7 +203,6 @@ ApplicationWindow {
     }
 
     function removeInput(inputId) {
-        // The engine always has somewhere to route from.
         if (inputs.length <= 1)
             return;
         Engine.removeInput(inputId);
@@ -233,7 +224,6 @@ ApplicationWindow {
 
         const dev = Engine.createOutput(protocol + " " + n, "127.0.0.1",
                                         defaults[protocol] || 8000, protocol);
-        // An output added while looking at an input is wired to it.
         if (currentInputId >= 0)
             Engine.setRoute(currentInputId, dev.id, { enabled: true });
         Engine.saveConfiguration();

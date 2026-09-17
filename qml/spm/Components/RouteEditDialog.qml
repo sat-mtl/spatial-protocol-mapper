@@ -4,13 +4,10 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Per-route editor: source range and index offset. Shared by the basic view's
-// output rows and the matrix cells, so a route means the same thing wherever
-// it is set.
+// Per-route source range and index offset, shared by the output rows and the
+// matrix cells.
 //
-// The range tests the *incoming* source index, before the offset is applied —
-// the numbers here are the ones on the sender, not on the receiver.
-//
+// The range tests the incoming source index, before the offset is applied.
 // -1 on either bound means unbounded; `routeEdited` reports the same.
 Dialog {
     id: root
@@ -24,8 +21,6 @@ Dialog {
     standardButtons: Dialog.Ok | Dialog.Cancel
     closePolicy: Popup.CloseOnEscape
 
-    // Refusing is better than silently forwarding nothing: a route that can
-    // never match looks exactly like a broken one at the wire.
     readonly property bool rangeValid: allSources.checked || minBox.value <= maxBox.value
 
     function editRoute(label, offset, min, max) {
@@ -124,7 +119,6 @@ Dialog {
         }
     }
 
-    // Keep OK unavailable rather than accepting a range that matches nothing.
     onOpened: {
         const ok = root.standardButton(Dialog.Ok);
         if (ok)

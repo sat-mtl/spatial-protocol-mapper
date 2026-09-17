@@ -1,11 +1,8 @@
 pragma Singleton
 import QtQuick
+import ca.qc.sat.qmlcomponents
 
-// One definition of the device-table columns, so the header, the input rows
-// and the output rows cannot drift apart.
-//
-// Name is the flexible column; everything else is fixed. The fixed total plus
-// the gaps has to leave at least `minName` at the window's minimum width.
+// Shared by TableHeader, InputRow and OutputRow. Name is the flexible column.
 QtObject {
     readonly property int toggle: 48
     readonly property int minName: 120
@@ -14,4 +11,9 @@ QtObject {
     readonly property int protocol: 195
     readonly property int route: 120
     readonly property int action: 80
+
+    // Seven cells, six gaps, and Theme.spacing * 2 of margin at each end.
+    readonly property int minimumRowWidth:
+        toggle + minName + host + port + protocol + route + action
+        + 6 * Theme.spacing + 4 * Theme.spacing
 }
