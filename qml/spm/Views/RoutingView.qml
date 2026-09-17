@@ -4,8 +4,8 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// Inputs above, outputs below, same columns in both. The output switches are
-// the selected input's routes to them.
+// Two tables with the same columns: the inputs, and the outputs the selected
+// input feeds.
 Pane {
     id: root
 
@@ -33,34 +33,66 @@ Pane {
 
         SectionHeader { text: "Inputs" }
 
-        ListView {
+        Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(contentHeight, 4 * 58)
-            spacing: 6
+            Layout.preferredHeight: inputHeader.height + inputList.contentHeight + 2
+            Layout.maximumHeight: inputHeader.height + 4 * 48 + 2
+            color: Theme.backgroundColor
+            border.color: Theme.borderColor
+            border.width: 1
+            radius: Theme.borderRadius
             clip: true
-            interactive: contentHeight > height
-            model: root.controller.inputListModel
 
-            delegate: InputRow {
-                required property var model
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 1
+                spacing: 0
 
-                width: ListView.view ? ListView.view.width : 0
-                name: model.name
-                port: model.port
-                protocol: model.protocol
-                listening: model.enabled
-                error: model.error
-                protocols: root.controller.inputProtocols
-                // Only worth marking once there is more than one to choose.
-                selected: model.inputId === root.controller.currentInputId
-                          && root.controller.inputListModel.count > 1
+                TableHeader {
+                    id: inputHeader
+                    Layout.fillWidth: true
+                    hostTitle: "Address"
+                    routeTitle: ""
+                }
 
-                onSelectRequested: root.controller.selectInput(model.inputId)
-                onListeningToggled: value => root.controller.setInputListening(model.inputId, value)
-                onNameEdited: value => root.controller.updateInput(model.inputId, { name: value })
-                onPortEdited: value => root.controller.updateInput(model.inputId, { port: value })
-                onProtocolEdited: value => root.controller.updateInput(model.inputId, { protocol: value })
-                onRemoveRequested: root.controller.removeInput(model.inputId)
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: Theme.borderColor
+                }
+
+                ListView {
+                    id: inputList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    interactive: contentHeight > height
+                    model: root.controller.inputListModel
+
+                    delegate: InputRow {
+                        required property var model
+                        required property int index
+
+                        width: ListView.view ? ListView.view.width : 0
+                        alternate: index % 2 === 1
+                        name: model.name
+                        port: model.port
+                        protocol: model.protocol
+                        listening: model.enabled
+                        error: model.error
+                        protocols: root.controller.inputProtocols
+                        // Only worth marking once there is more than one.
+                        selected: model.inputId === root.controller.currentInputId
+                                  && root.controller.inputListModel.count > 1
+
+                        onSelectRequested: root.controller.selectInput(model.inputId)
+                        onListeningToggled: value => root.controller.setInputListening(model.inputId, value)
+                        onNameEdited: value => root.controller.updateInput(model.inputId, { name: value })
+                        onPortEdited: value => root.controller.updateInput(model.inputId, { port: value })
+                        onProtocolEdited: value => root.controller.updateInput(model.inputId, { protocol: value })
+                        onRemoveRequested: root.controller.removeInput(model.inputId)
+                    }
+                }
             }
         }
 
@@ -91,42 +123,67 @@ Pane {
 
         SectionHeader { text: "Outputs" }
 
-        Item {
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            color: Theme.backgroundColor
+            border.color: Theme.borderColor
+            border.width: 1
+            radius: Theme.borderRadius
+            clip: true
 
-            ListView {
+            ColumnLayout {
                 anchors.fill: parent
-                spacing: 6
-                clip: true
-                model: root.controller.routeListModel
+                anchors.margins: 1
+                spacing: 0
 
-                delegate: OutputRow {
-                    required property var model
+                TableHeader {
+                    Layout.fillWidth: true
+                    hostTitle: "Address"
+                    routeTitle: "Sources"
+                }
 
-                    width: ListView.view ? ListView.view.width : 0
-                    name: model.name
-                    host: model.host
-                    port: model.port
-                    protocol: model.protocol
-                    protocols: root.controller.outputProtocols
-                    routed: model.routed
-                    sourceOffset: model.sourceOffset
-                    srcMin: model.srcMin
-                    srcMax: model.srcMax
-                    alsoFedBy: model.alsoFedBy
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: Theme.borderColor
+                }
 
-                    onRoutedToggled: value => root.controller.setRouteEnabled(model.outputId, value)
-                    onNameEdited: value => root.controller.updateOutput(model.outputId, { name: value })
-                    onHostEdited: value => root.controller.updateOutput(model.outputId, { host: value })
-                    onPortEdited: value => root.controller.updateOutput(model.outputId, { port: value })
-                    onProtocolEdited: value => root.controller.updateOutput(model.outputId, { protocol: value })
-                    onRemoveRequested: root.controller.removeOutput(model.outputId)
-                    onRouteEditRequested: {
-                        routeDialog.outputId = model.outputId;
-                        routeDialog.editRoute(
-                            root.controller.currentInputName + "  →  " + model.name,
-                            model.sourceOffset, model.srcMin, model.srcMax);
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: root.controller.routeListModel
+
+                    delegate: OutputRow {
+                        required property var model
+                        required property int index
+
+                        width: ListView.view ? ListView.view.width : 0
+                        alternate: index % 2 === 1
+                        name: model.name
+                        host: model.host
+                        port: model.port
+                        protocol: model.protocol
+                        protocols: root.controller.outputProtocols
+                        routed: model.routed
+                        sourceOffset: model.sourceOffset
+                        srcMin: model.srcMin
+                        srcMax: model.srcMax
+                        alsoFedBy: model.alsoFedBy
+
+                        onRoutedToggled: value => root.controller.setRouteEnabled(model.outputId, value)
+                        onNameEdited: value => root.controller.updateOutput(model.outputId, { name: value })
+                        onHostEdited: value => root.controller.updateOutput(model.outputId, { host: value })
+                        onPortEdited: value => root.controller.updateOutput(model.outputId, { port: value })
+                        onProtocolEdited: value => root.controller.updateOutput(model.outputId, { protocol: value })
+                        onRemoveRequested: root.controller.removeOutput(model.outputId)
+                        onRouteEditRequested: {
+                            routeDialog.outputId = model.outputId;
+                            routeDialog.editRoute(
+                                root.controller.currentInputName + "  →  " + model.name,
+                                model.sourceOffset, model.srcMin, model.srcMax);
+                        }
                     }
                 }
             }

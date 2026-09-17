@@ -2,11 +2,11 @@ import QtQuick
 import QtQuick.Controls.Basic
 import ca.qc.sat.qmlcomponents
 
-// One input-to-output connection.
+// One input-to-output connection. Square-cornered and gapless: adjacent cells
+// share their rules, so the grid reads as a table rather than as loose tiles.
 //
-// Connected cells use the same green as the switches in the lists, so "on"
-// looks the same everywhere. The arrow is drawn rather than set as a glyph:
-// the turn is what reads as routing, and no font is guaranteed to carry it.
+// Connected uses the same green as the switches in the lists, so "on" looks the
+// same everywhere.
 Rectangle {
     id: root
 
@@ -17,6 +17,7 @@ Rectangle {
     property int srcMax: -1
     property string inputName: ""
     property string outputName: ""
+    property bool alternate: false
 
     readonly property bool ranged: srcMin >= 0 || srcMax >= 0
     readonly property string rangeText:
@@ -26,21 +27,21 @@ Rectangle {
     signal toggled
     signal editRequested
 
-    color: routed ? Theme.buttonBgActive : Theme.backgroundColorSecondary
-    border.color: hover.hovered ? Theme.primaryColor : Theme.borderColor
-    border.width: hover.hovered ? 2 : 1
-    radius: 4
+    color: routed ? Theme.buttonBgActive
+         : hover.hovered ? Theme.backgroundColorTertiary
+         : alternate ? Qt.darker(Theme.backgroundColorSecondary, 1.12)
+                     : Theme.backgroundColorSecondary
 
     Behavior on color {
         ColorAnimation { duration: Theme.animationDuration / 2 }
     }
 
-    // Right, then up.
+    // Right, then up: the turn is what reads as routing, and no font is
+    // guaranteed to carry the glyph.
     Canvas {
-        id: arrow
         anchors.centerIn: parent
-        width: 22
-        height: 22
+        width: 24
+        height: 24
         visible: root.routed
         antialiasing: true
 
@@ -56,28 +57,28 @@ Rectangle {
             ctx.lineCap = "round";
             ctx.lineJoin = "round";
 
-            const left = 3, turn = 15, bottom = 18, top = 7;
+            const left = 4, turn = 16, bottom = 19, top = 8;
             ctx.beginPath();
             ctx.moveTo(left, bottom);
             ctx.lineTo(turn, bottom);
             ctx.lineTo(turn, top);
             ctx.stroke();
 
-            // Arrowhead at the top of the upstroke.
             ctx.beginPath();
             ctx.moveTo(turn, top - 5);
-            ctx.lineTo(turn - 4, top + 1);
-            ctx.lineTo(turn + 4, top + 1);
+            ctx.lineTo(turn - 4.5, top + 1.5);
+            ctx.lineTo(turn + 4.5, top + 1.5);
             ctx.closePath();
             ctx.fill();
         }
     }
 
-    // The offset displaces the arrow's meaning, so it is shown on the cell.
+    // The offset and a narrowed range change what the arrow means, so both are
+    // legible without hovering.
     Text {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.margins: 3
+        anchors.margins: 4
         visible: root.routed && root.sourceOffset !== 0
         text: "+" + root.sourceOffset
         color: Theme.textColorOnAccent
@@ -86,7 +87,6 @@ Rectangle {
         font.bold: true
     }
 
-    // A route that does not carry every source.
     Rectangle {
         visible: root.routed && root.ranged
         width: 7
@@ -95,7 +95,23 @@ Rectangle {
         color: Theme.textColorOnAccent
         anchors.top: parent.top
         anchors.right: parent.right
-        anchors.margins: 3
+        anchors.margins: 4
+    }
+
+    // Shared rules.
+    Rectangle {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+        color: Theme.borderColor
+    }
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.borderColor
     }
 
     HoverHandler {
