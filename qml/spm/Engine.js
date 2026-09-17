@@ -80,9 +80,6 @@ function onInputValueReceived(inp, address, value) {
         LogQueue.pushInput(`IN  [${inp.name}] ${address} = ${JSON.stringify(value)}`);
     }
 
-    const links = g_linksByInput[inp.id];
-    if (!links || links.length === 0) return;
-
     // Normalize the incoming message to an internal SpatGRIS-style form:
     //   command    : "pol" | "deg" | "car" | "clr" | "alg"
     //   sourceIndex: 1-based source index (or -1 if n/a)
@@ -94,7 +91,19 @@ function onInputValueReceived(inp, address, value) {
     //     alg   : [algorithm]
     // Angles and axes use SpatGRIS conventions internally
     // (negative azimuth = left). Each output's mapper applies its own flips.
-    const norm = applyInputScale(inp, parseInput(inp, address, value));
+    //
+    // This runs even when nothing is routed from this input. ADM and SPAT send
+    // one parameter per message and the parser accumulates them per source, so
+    // skipping it while every route is disabled would leave that state cold:
+    // the first message after a route is switched back on would carry spec
+    // defaults for every axis the sender had not just written, and the source
+    // would jump. Only the scaling and the dispatch below are worth skipping.
+    const parsed = parseInput(inp, address, value);
+
+    const links = g_linksByInput[inp.id];
+    if (!links || links.length === 0) return;
+
+    const norm = applyInputScale(inp, parsed);
 
     if (norm) {
         for (let link of links) {
@@ -646,20 +655,38 @@ function openInput(inp) {
     // released before we bind again. Each closure captures its own device;
     // nothing here touches shared state.
     Qt.callLater(function () {
-        inp.osc = Protocols.osc({
-            onOsc: function (a, v) {
-                onInputValueReceived(inp, a, v);
-            }
-        });
-        inp.udp = Protocols.inboundUDP({
-            Transport: {
-                Bind: "0.0.0.0",
-                Port: inp.port
-            },
-            onMessage: function (bytes) {
-                inp.osc.processMessage(bytes);
-            }
-        });
+        // The device can be removed or switched off between asking for the
+        // bind and this running, and a pending callLater cannot be cancelled.
+        // Without these two checks the closure would bind a socket nothing
+        // references, or revive an input the user has just turned off.
+        if (inputs.indexOf(inp) < 0) return;
+        if (!inp.enabled) return;
+        // A second openInput before this fired already installed its own
+        // socket; binding again would leak this one and fail on the port.
+        if (inp.udp) return;
+
+        try {
+            inp.osc = Protocols.osc({
+                onOsc: function (a, v) {
+                    onInputValueReceived(inp, a, v);
+                }
+            });
+            inp.udp = Protocols.inboundUDP({
+                Transport: {
+                    Bind: "0.0.0.0",
+                    Port: inp.port
+                },
+                onMessage: function (bytes) {
+                    // The socket can outlive the parser on teardown.
+                    if (inp.osc) inp.osc.processMessage(bytes);
+                }
+            });
+        } catch (e) {
+            // openOutputSocket has always guarded this; the inbound side
+            // reported a failed bind but not a throwing one.
+            console.log("Failed to listen on", inp.port, e);
+            inp.udp = null;
+        }
 
         if (inp.udp) {
             inp.listening = true;
@@ -734,11 +761,21 @@ function updateInput(id, props) {
     if (props.port !== undefined) {
         // The field hands back a string; a socket wants a number.
         const port = parsePort(props.port);
-        // Refuse a port another input already holds: the bind would fail at
-        // the OS level and leave a device that looks live but never receives.
-        if (port !== null && port !== inp.port && !portInUse(port, id)) {
-            inp.port = port;
-            if (inp.enabled) openInput(inp);
+        if (port === null) {
+            // Say so. updateInputList() below republishes the old port, so an
+            // unreported rejection just snaps the field back with no reason.
+            inp.error = "Invalid port";
+        } else if (port !== inp.port) {
+            // Refuse a port another input already holds: the bind would fail
+            // at the OS level and leave a device that looks live but never
+            // receives.
+            if (portInUse(port, id)) {
+                inp.error = "Port " + port + " is already used by another input";
+            } else {
+                inp.error = "";
+                inp.port = port;
+                if (inp.enabled) openInput(inp);
+            }
         }
     }
 
@@ -750,36 +787,6 @@ function updateInput(id, props) {
 function parsePort(value) {
     const n = parseInt(value);
     return (isNaN(n) || n < 1 || n > 65535) ? null : n;
-}
-
-function setInputPort(id, port) {
-    const inp = findInput(id);
-    if (!inp || inp.port === port) return;
-    inp.port = port;
-    // Changing the port always rebinds; an input the user has switched off
-    // stays off until they ask for it.
-    if (inp.enabled) openInput(inp);
-    else updateInputList();
-    saveConfiguration();
-}
-
-function setInputProtocol(id, protocol) {
-    const inp = findInput(id);
-    if (!inp) return;
-    inp.protocol = protocol;
-    // The accumulated coordinates describe the old interpretation.
-    inp.admState = {};
-    inp.spatState = {};
-    updateInputList();
-    saveConfiguration();
-}
-
-function setInputName(id, name) {
-    const inp = findInput(id);
-    if (!inp) return;
-    inp.name = name;
-    updateInputList();
-    saveConfiguration();
 }
 
 function setInputListening(id, listening) {
@@ -1040,30 +1047,69 @@ function saveConfiguration() {
 }
 
 function restoreConfiguration() {
+    const raw = appSettings.savedConfiguration || "";
     let cfg = null;
     try {
-        cfg = JSON.parse(appSettings.savedConfiguration || "null");
+        if (raw !== "")
+            cfg = JSON.parse(raw);
     } catch (e) {
         console.log("Could not parse saved configuration:", e);
     }
 
-    if (cfg && cfg.version === 2 && cfg.inputs && cfg.inputs.length > 0)
+    if (cfg && cfg.version === 2 && cfg.inputs && cfg.inputs.length > 0) {
         restoreV2(cfg);
-    else
+    } else if (raw !== "") {
+        // Something was stored and we could not use it. Come up with a working
+        // default, but do NOT migrate: migrateFromV1() ends in
+        // saveConfiguration(), which would overwrite the only copy of whatever
+        // the user actually had with a v1-derived guess. A truncated write is
+        // indistinguishable from a first run at this level, so the stored
+        // bytes stay put until the user changes something deliberately.
+        console.log("Saved configuration unusable; keeping the stored copy.");
+        createInput("Input 1", appSettings.listenPort, "Auto");
+    } else {
         migrateFromV1();
+    }
 
     reindexRoutes();
     updateInputList();
     updateOutputList();
 }
 
+// An entry with no id, or one shared with another device, cannot be restored:
+// Math.max against undefined yields NaN, and NaN never compares equal to
+// itself, so every later id would be unfindable and no route could ever be
+// matched again. A duplicate is just as bad -- findOutput returns the first,
+// so routes meant for the second would silently retarget.
+function usableDevices(list) {
+    const seen = {};
+    const out = [];
+    for (let e of list || []) {
+        if (!e || typeof e !== "object") continue;
+        if (typeof e.id !== "number" || !isFinite(e.id)) {
+            console.log("Skipping a saved device with no usable id");
+            continue;
+        }
+        if (seen[e.id]) {
+            console.log("Skipping a saved device with a duplicate id:", e.id);
+            continue;
+        }
+        seen[e.id] = true;
+        out.push(e);
+    }
+    return out;
+}
+
 function restoreV2(cfg) {
+    const savedInputs = usableDevices(cfg.inputs);
+    const savedOutputs = usableDevices(cfg.outputs);
+
     let maxId = 0;
-    for (let si of cfg.inputs) maxId = Math.max(maxId, si.id);
-    for (let so of cfg.outputs || []) maxId = Math.max(maxId, so.id);
+    for (let si of savedInputs) maxId = Math.max(maxId, si.id);
+    for (let so of savedOutputs) maxId = Math.max(maxId, so.id);
     g_nextId = maxId + 1;
 
-    for (let si of cfg.inputs) {
+    for (let si of savedInputs) {
         const inp = {
             id: si.id, name: si.name, protocol: si.protocol || "Auto",
             port: si.port, enabled: si.enabled !== false,
@@ -1078,7 +1124,7 @@ function restoreV2(cfg) {
             openInput(inp);
     }
 
-    for (let so of cfg.outputs || []) {
+    for (let so of savedOutputs) {
         const dev = {
             id: so.id, name: so.name, host: so.host,
             port: so.port, protocol: so.protocol, udp: null
@@ -1088,6 +1134,10 @@ function restoreV2(cfg) {
     }
 
     for (let sr of cfg.routes || []) {
+        if (!sr || !findInput(sr.inputId) || !findOutput(sr.outputId)) {
+            console.log("Skipping a saved route with no device at one end");
+            continue;
+        }
         routes.push({
             inputId: sr.inputId,
             outputId: sr.outputId,
