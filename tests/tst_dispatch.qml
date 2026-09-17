@@ -4,10 +4,8 @@
 // Stateful engine tests: the message path, device lifecycle and persistence.
 //
 // Engine.js is not a `.pragma library`, so its free variables resolve against
-// the QML context that imports it. Declaring them here hands the engine a
-// complete fake world -- stub sockets that record what was sent, a stub
-// Protocols, a stub settings object -- and lets the parts that tst_engine.qml
-// cannot reach be driven directly.
+// the QML context that imports it. Declaring them here gives the engine stub
+// sockets that record what they were sent, and a stub settings object.
 import QtQuick
 import QtTest
 import "../qml/spm/Engine.js" as Engine
@@ -31,17 +29,13 @@ TestCase {
         property string savedOutputDevices: "[]"
     }
 
-    // Records every bind so a leaked or revived socket is visible.
     property var opened: []
     property var closed: []
 
-    // `Protocols` is injected by ossia/score as a global; qmltestrunner has no
-    // such thing, and a QML property cannot be named with a capital, so it goes
-    // on the JS global object where the engine's unqualified lookup finds it.
+    // `Protocols` is a score-injected global. A QML property cannot be named
+    // with a capital, so it goes on the JS global object instead.
     function initTestCase() {
-        // An indirect `this` is the JS global object; Qt 6.4's V4 has no
-        // `globalThis`.
-        var g = (function () { return this; })();
+        var g = (function () { return this; })();   // Qt 6.4 has no globalThis
         g.Protocols = {
             osc: function (cfg) {
                 return { processMessage: function () {} };
@@ -94,10 +88,8 @@ TestCase {
     // The per-source accumulator must not go cold                       //
     // ---------------------------------------------------------------- //
 
-    // ADM and SPAT send one parameter per message and the parser accumulates
-    // them per source. If parsing is skipped while nothing is routed, the
-    // first message after a route comes back on carries spec defaults for
-    // every axis the sender did not just write, and the source jumps.
+    // ADM and SPAT accumulate one parameter per message, so that state has to
+    // stay current even while nothing is routed.
     function test_accumulator_stays_warm_while_nothing_is_routed() {
         reset();
         var out = sink(10, "o", "ADM-OSC");
@@ -153,9 +145,8 @@ TestCase {
     // Persistence                                                       //
     // ---------------------------------------------------------------- //
 
-    // A truncated or corrupt blob must not be migrated over: migrateFromV1
-    // ends in saveConfiguration(), which would replace the only copy of the
-    // user's real setup with a v1-derived guess.
+    // migrateFromV1 ends in saveConfiguration(), which would replace the
+    // stored setup with a v1-derived guess.
     function test_corrupt_configuration_is_not_overwritten() {
         reset();
         var corrupt = '{"version":2,"inputs":[{"id":1,"na';
@@ -191,9 +182,8 @@ TestCase {
         verify(appSettings.savedConfiguration !== "", "and a v2 blob is written");
     }
 
-    // Math.max against an undefined id yields NaN, and NaN never compares
-    // equal to itself: every later id would be unfindable and no route could
-    // ever be matched again.
+    // An undefined id makes g_nextId NaN, and NaN never compares equal to
+    // itself, so no device could be found again.
     function test_a_device_without_an_id_cannot_poison_the_counter() {
         reset();
         appSettings.savedConfiguration = JSON.stringify({
@@ -230,8 +220,6 @@ TestCase {
         compare(tc.outputs[0].name, "x");
     }
 
-    // A route naming a device that was refused would otherwise sit in the
-    // array and be written straight back out on the next save.
     function test_routes_to_missing_devices_are_dropped() {
         reset();
         appSettings.savedConfiguration = JSON.stringify({
@@ -280,8 +268,6 @@ TestCase {
         compare(a.error, "");
     }
 
-    // Removing an input must take its routes with it, or the dispatch index
-    // would keep resolving them.
     function test_removing_an_input_drops_its_routes() {
         reset();
         var a = Engine.createInput("a", 18032, "Auto");

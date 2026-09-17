@@ -15,8 +15,8 @@ jobs:
         with:
           submodules: recursive
 
-      # The engine tests exercise pure JS (parsing and protocol conversion),
-      # so they need the QML test runner but neither ossia/score nor a display.
+      # QtTest pulls in QtQuick.Window and QtQml.WorkerScript; qmllint needs
+      # QtCore for Settings.
       - name: Install Qt6 QML tooling
         run: |
           sudo apt-get update -qq
@@ -40,9 +40,7 @@ jobs:
           [ -x "$RUNNER" ] || RUNNER=$(command -v qmltestrunner)
           QT_QPA_PLATFORM=offscreen "$RUNNER" -import qml -input tests/
 
-      # Informational only: qmllint cannot see the ossia/score runtime, and
-      # flags unqualified access to the controller property the views are
-      # handed. Read it, do not gate on it.
+      # Informational: qmllint cannot see the ossia/score runtime.
       - name: qmllint
         continue-on-error: true
         run: |
