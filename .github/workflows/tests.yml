@@ -8,10 +8,10 @@ on:
 
 jobs:
   qml-tests:
-    name: Engine conversion tests
+    name: QML tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -24,6 +24,7 @@ jobs:
             qt6-declarative-dev-tools \
             qml6-module-qtquick \
             qml6-module-qtqml \
+            qml6-module-qtqml-workerscript \
             qml6-module-qtquick-controls \
             qml6-module-qtquick-layouts \
             qml6-module-qtquick-templates \
