@@ -32,41 +32,26 @@ Rectangle {
         ColorAnimation { duration: Theme.animationDuration / 2 }
     }
 
-    // Drawn rather than a glyph: no font is guaranteed to carry it.
-    Canvas {
+    // Right, then up.
+    Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: root.annotated ? -7 : 0
-        width: 24
-        height: 24
+        width: 22
+        height: 22
         visible: root.routed
-        antialiasing: true
 
-        readonly property color stroke: Theme.textColorOnAccent
-        onStrokeChanged: requestPaint()
+        readonly property color ink: Theme.textColorOnAccent
 
-        onPaint: {
-            const ctx = getContext("2d");
-            ctx.reset();
-            ctx.strokeStyle = stroke;
-            ctx.fillStyle = stroke;
-            ctx.lineWidth = 2;
-            ctx.lineCap = "round";
-            ctx.lineJoin = "round";
-
-            const left = 4, turn = 16, bottom = 19, top = 8;
-            ctx.beginPath();
-            ctx.moveTo(left, bottom);
-            ctx.lineTo(turn, bottom);
-            ctx.lineTo(turn, top);
-            ctx.stroke();
-
-            ctx.beginPath();
-            ctx.moveTo(turn, top - 5);
-            ctx.lineTo(turn - 4.5, top + 1.5);
-            ctx.lineTo(turn + 4.5, top + 1.5);
-            ctx.closePath();
-            ctx.fill();
+        Rectangle { x: 3;  y: 16; width: 12; height: 2;  color: parent.ink }
+        Rectangle { x: 13; y: 7;  width: 2;  height: 11; color: parent.ink }
+        Rectangle {
+            x: 11; y: 3
+            width: 7; height: 7
+            color: parent.ink
+            rotation: 45
+            transformOrigin: Item.Center
+            scale: 0.75
         }
     }
 
