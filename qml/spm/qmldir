@@ -6,7 +6,9 @@ MatrixView             Views/MatrixView.qml
 MonitorView            Views/MonitorView.qml
 
 # Presentation-only building blocks
+singleton Columns      Components/Columns.qml
 SectionHeader          Components/SectionHeader.qml
+TableHeader            Components/TableHeader.qml
 OutputRow              Components/OutputRow.qml
 DeviceField            Components/DeviceField.qml
 RowButton              Components/RowButton.qml

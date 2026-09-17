@@ -3,8 +3,9 @@ import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
 
-// One input device. Columns line up with OutputRow so the two lists read as
-// one table; inputs bind on every interface, so the host column is empty.
+// One row of the inputs table. Columns come from Columns so the header and the
+// outputs table line up with it; inputs bind on every interface, so their
+// address cell is empty and the route cell carries the bind error.
 Rectangle {
     id: root
 
@@ -14,8 +15,9 @@ Rectangle {
     property bool listening: false
     property string error: ""
     property var protocols: []
-    // Which input the output switches below refer to.
+    // Which input the outputs table is showing routes for.
     property bool selected: false
+    property bool alternate: false
 
     signal listeningToggled(bool value)
     signal nameEdited(string value)
@@ -24,37 +26,63 @@ Rectangle {
     signal removeRequested
     signal selectRequested
 
-    implicitHeight: 52
-    color: Theme.backgroundColorSecondary
-    border.color: root.selected ? Theme.primaryColor : Theme.borderColor
-    border.width: 1
-    radius: Theme.borderRadius
+    implicitHeight: 48
+    color: root.selected ? Theme.backgroundColorTertiary
+         : root.alternate ? Qt.darker(Theme.backgroundColorSecondary, 1.12)
+                          : Theme.backgroundColorSecondary
+
+    // Shared edges: only the bottom rule, so consecutive rows read as a table
+    // rather than as a stack of cards.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.separatorColor
+    }
+
+    // The selected input is what the outputs table below refers to.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 3
+        color: Theme.primaryColor
+        visible: root.selected
+    }
 
     TapHandler { onTapped: root.selectRequested() }
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: Theme.spacing
-        anchors.rightMargin: Theme.spacing
+        anchors.leftMargin: Theme.spacing * 2
+        anchors.rightMargin: Theme.spacing * 2
         spacing: Theme.spacing
 
         CustomSwitch {
+            Layout.preferredWidth: Columns.toggle
             checked: root.listening
             onToggled: root.listeningToggled(checked)
         }
 
         DeviceField {
             Layout.fillWidth: true
-            Layout.minimumWidth: 120
+            Layout.minimumWidth: Columns.minName
             committed: root.name
             onCommit: value => root.nameEdited(value)
         }
 
-        // Inputs bind on 0.0.0.0; the slot keeps the columns lined up.
-        Item { Layout.preferredWidth: 120 }
+        CustomLabel {
+            Layout.preferredWidth: Columns.host
+            text: "any address"
+            color: Theme.textColorSecondary
+            font.pixelSize: Theme.fontSizeSmall
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
 
         DeviceField {
-            Layout.preferredWidth: 80
+            Layout.preferredWidth: Columns.port
             committed: String(root.port)
             horizontalAlignment: Text.AlignHCenter
             validator: IntValidator { bottom: 1; top: 65535 }
@@ -62,24 +90,24 @@ Rectangle {
         }
 
         CustomComboBox {
-            Layout.preferredWidth: 195
+            Layout.preferredWidth: Columns.protocol
             model: root.protocols
             currentIndex: Math.max(0, root.protocols.indexOf(root.protocol))
             onActivated: root.protocolEdited(currentText)
         }
 
-        // Where the outputs carry their route button.
         CustomLabel {
-            Layout.preferredWidth: 120
+            Layout.preferredWidth: Columns.route
             text: root.error
             color: Theme.errorColor
             font.pixelSize: Theme.fontSizeSmall
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
 
         RowButton {
-            Layout.preferredWidth: 80
+            Layout.preferredWidth: Columns.action
             text: "Remove"
             onClicked: root.removeRequested()
         }
