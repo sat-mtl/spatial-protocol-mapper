@@ -14,6 +14,16 @@ Pane {
     padding: 0
     background: Rectangle { color: Theme.backgroundColor }
 
+    InputScaleDialog {
+        id: scaleDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+
+        property int inputId: -1
+        onScaleAccepted: (x, y, z) => root.controller.updateInput(
+                             inputId, { scaleX: x, scaleY: y, scaleZ: z })
+    }
+
     RouteEditDialog {
         id: routeDialog
         parent: Overlay.overlay
@@ -52,7 +62,7 @@ Pane {
                     id: inputHeader
                     Layout.fillWidth: true
                     hostTitle: "Address"
-                    routeTitle: ""
+                    routeTitle: "Scale"
                 }
 
                 Rectangle {
@@ -79,6 +89,9 @@ Pane {
                         listening: model.enabled
                         error: model.error
                         protocols: root.controller.inputProtocols
+                        scaleX: model.scaleX
+                        scaleY: model.scaleY
+                        scaleZ: model.scaleZ
                         // Only worth marking once there is more than one.
                         selected: model.inputId === root.controller.currentInputId
                                   && root.controller.inputListModel.count > 1
@@ -89,6 +102,11 @@ Pane {
                         onPortEdited: value => root.controller.updateInput(model.inputId, { port: value })
                         onProtocolEdited: value => root.controller.updateInput(model.inputId, { protocol: value })
                         onRemoveRequested: root.controller.removeInput(model.inputId)
+                        onScaleEditRequested: {
+                            scaleDialog.inputId = model.inputId;
+                            scaleDialog.editScale(model.name, model.scaleX,
+                                                  model.scaleY, model.scaleZ);
+                        }
                     }
                 }
             }

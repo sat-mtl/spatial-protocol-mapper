@@ -94,7 +94,7 @@ function onInputValueReceived(inp, address, value) {
     //     alg   : [algorithm]
     // Angles and axes use SpatGRIS conventions internally
     // (negative azimuth = left). Each output's mapper applies its own flips.
-    const norm = parseInput(inp, address, value);
+    const norm = applyInputScale(inp, parseInput(inp, address, value));
 
     if (norm) {
         for (let link of links) {
@@ -170,6 +170,78 @@ function forwardAdmRaw(inp, links, address, value) {
             LogQueue.pushOutput(`OUT [${out.name}] ${outAddress} = ${JSON.stringify(value)}`);
         }
     }
+}
+
+// ----- Per-input scaling ------------------------------------------------ //
+// Corrects a sender whose room is a different size, or whose axes are mirrored
+// relative to ours: a negative factor flips that axis. Applied once, on the
+// canonical form, before any route sees the message, so every output fed by an
+// input agrees on where the source is.
+//
+// SpatGRIS convention: azimuth is measured from the front (+y) toward the
+// right (+x), elevation from the horizon toward +z.
+function sphericalToCartesian(az, el, r) {
+    const ce = Math.cos(el);
+    return { x: r * ce * Math.sin(az), y: r * ce * Math.cos(az), z: r * Math.sin(el) };
+}
+
+function cartesianToSpherical(x, y, z) {
+    const r = Math.sqrt(x * x + y * y + z * z);
+    // At the origin there is no direction to report; asin(0/0) would be NaN.
+    if (r < 1e-12) return { az: 0, el: 0, r: 0 };
+    return { az: Math.atan2(x, y), el: Math.asin(z / r), r: r };
+}
+
+function scaleOf(inp, axis) {
+    const v = inp[axis];
+    return (v === undefined || v === null) ? 1 : v;
+}
+
+function inputHasScale(inp) {
+    return scaleOf(inp, "scaleX") !== 1
+        || scaleOf(inp, "scaleY") !== 1
+        || scaleOf(inp, "scaleZ") !== 1;
+}
+
+// Returns a new normalized message, or the one it was given when there is
+// nothing to do — so an unscaled input keeps today's exact values and pays
+// nothing for the feature.
+function applyInputScale(inp, norm) {
+    if (!norm || !inputHasScale(inp)) return norm;
+
+    const sx = scaleOf(inp, "scaleX");
+    const sy = scaleOf(inp, "scaleY");
+    const sz = scaleOf(inp, "scaleZ");
+    const a = norm.args;
+
+    // Note what is *not* carried over: `legacyArgs`. A SpatGRIS output re-emits
+    // that payload verbatim, which would put the unscaled position back on the
+    // wire and silently ignore the input's scaling.
+    switch (norm.command) {
+    case "car":
+        if (a.length < 3) return norm;
+        return {
+            command: "car",
+            sourceIndex: norm.sourceIndex,
+            args: [a[0] * sx, a[1] * sy, a[2] * sz].concat(a.slice(3))
+        };
+    case "pol":
+    case "deg": {
+        if (a.length < 3) return norm;
+        // Polar is scaled by going through cartesian and back. That is a
+        // float round trip, which is why identity returns early above.
+        const toRad = (norm.command === "deg") ? Math.PI / 180 : 1;
+        const p = sphericalToCartesian(a[0] * toRad, a[1] * toRad, a[2]);
+        const q = cartesianToSpherical(p.x * sx, p.y * sy, p.z * sz);
+        return {
+            command: norm.command,
+            sourceIndex: norm.sourceIndex,
+            args: [q.az / toRad, q.el / toRad, q.r].concat(a.slice(3))
+        };
+    }
+    }
+    // clr, alg and anything forwarded verbatim carry no position.
+    return norm;
 }
 
 // ----- Input parsing: /spat/serv ---------------------------------------- //
@@ -616,6 +688,7 @@ function createInput(name, port, protocol) {
         port: port,
         enabled: true,     // what the user asked for; persisted
         listening: false,  // what the socket managed; runtime only
+        scaleX: 1, scaleY: 1, scaleZ: 1,
         error: "",
         udp: null,
         osc: null,
@@ -652,6 +725,11 @@ function updateInput(id, props) {
         // The accumulated coordinates describe the previous reading.
         inp.admState = {};
         inp.spatState = {};
+    }
+    for (let axis of ["scaleX", "scaleY", "scaleZ"]) {
+        if (props[axis] === undefined) continue;
+        const v = parseFloat(props[axis]);
+        if (!isNaN(v)) inp[axis] = v;
     }
     if (props.port !== undefined) {
         // The field hands back a string; a socket wants a number.
@@ -911,7 +989,10 @@ function updateInputList() {
             port: inp.port,
             enabled: inp.enabled !== false,
             listening: inp.listening,
-            error: inp.error
+            error: inp.error,
+            scaleX: scaleOf(inp, "scaleX"),
+            scaleY: scaleOf(inp, "scaleY"),
+            scaleZ: scaleOf(inp, "scaleZ")
         });
     }
     syncModel(inputListModel, rows, ["inputId"]);
@@ -966,7 +1047,10 @@ function saveConfiguration() {
         version: 2,
         inputs: inputs.map(function (i) {
             return { id: i.id, name: i.name, protocol: i.protocol,
-                     port: i.port, enabled: i.enabled !== false };
+                     port: i.port, enabled: i.enabled !== false,
+                     scaleX: scaleOf(i, "scaleX"),
+                     scaleY: scaleOf(i, "scaleY"),
+                     scaleZ: scaleOf(i, "scaleZ") };
         }),
         outputs: outputs.map(function (o) {
             return { id: o.id, name: o.name, protocol: o.protocol,
@@ -1009,6 +1093,9 @@ function restoreV2(cfg) {
         const inp = {
             id: si.id, name: si.name, protocol: si.protocol || "Auto",
             port: si.port, enabled: si.enabled !== false,
+            scaleX: (si.scaleX === undefined) ? 1 : si.scaleX,
+            scaleY: (si.scaleY === undefined) ? 1 : si.scaleY,
+            scaleZ: (si.scaleZ === undefined) ? 1 : si.scaleZ,
             listening: false, error: "",
             udp: null, osc: null, admState: {}
         };
