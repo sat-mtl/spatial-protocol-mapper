@@ -26,9 +26,9 @@ Dialog {
 
     function editScale(name, x, y, z) {
         inputName = name;
-        xField.text = ScaleFormat.number(x);
-        yField.text = ScaleFormat.number(y);
-        zField.text = ScaleFormat.number(z);
+        xField.text = Format.number(x);
+        yField.text = Format.number(y);
+        zField.text = Format.number(z);
         open();
     }
 
@@ -44,7 +44,7 @@ Dialog {
     }
 
     header: CustomLabel {
-        text: root.inputName === "" ? root.title : root.title + " — " + root.inputName
+        text: root.inputName === "" ? root.title : root.title + ": " + root.inputName
         font.bold: true
         font.pixelSize: Theme.fontSizeSubtitle
         padding: Theme.padding
@@ -90,14 +90,10 @@ Dialog {
 
         CustomLabel {
             Layout.preferredWidth: 330
-            wrapMode: Text.WordWrap
+            visible: !root.valid
+            color: Theme.errorColor
             font.pixelSize: Theme.fontSizeSmall
-            color: root.valid ? Theme.textColorSecondary : Theme.errorColor
-            text: !root.valid
-                  ? "Each factor must be a number between -100 and 100."
-                  : "A negative factor mirrors that axis; 1 leaves it alone. "
-                    + "Scaling all three alike changes distance without moving "
-                    + "anything."
+            text: "Invalid factor"
         }
     }
 

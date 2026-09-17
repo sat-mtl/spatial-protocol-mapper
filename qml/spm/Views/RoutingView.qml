@@ -184,7 +184,6 @@ Pane {
                         sourceOffset: model.sourceOffset
                         srcMin: model.srcMin
                         srcMax: model.srcMax
-                        alsoFedBy: model.alsoFedBy
 
                         onRoutedToggled: value => root.controller.setRouteEnabled(model.outputId, value)
                         onNameEdited: value => root.controller.updateOutput(model.outputId, { name: value })
@@ -195,7 +194,7 @@ Pane {
                         onRouteEditRequested: {
                             routeDialog.outputId = model.outputId;
                             routeDialog.editRoute(
-                                root.controller.currentInputName + "  →  " + model.name,
+                                root.controller.currentInputName + " to " + model.name,
                                 model.sourceOffset, model.srcMin, model.srcMax);
                         }
                     }

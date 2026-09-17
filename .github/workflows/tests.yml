@@ -24,12 +24,15 @@ jobs:
             qt6-declarative-dev-tools \
             qml6-module-qtquick \
             qml6-module-qtqml \
+            qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts \
+            qml6-module-qtquick-templates \
             qml6-module-qttest
 
       - name: qmltestrunner (hard gate)
         run: |
           RUNNER=$(command -v qmltestrunner || echo /usr/lib/qt6/bin/qmltestrunner)
-          QT_QPA_PLATFORM=offscreen "$RUNNER" -input tests/
+          QT_QPA_PLATFORM=offscreen "$RUNNER" -import qml -input tests/
 
       # Informational: the views import Score.UI, which only exists inside a
       # packaged ossia/score app, so unresolved-import noise is expected here.

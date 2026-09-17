@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import ca.qc.sat.qmlcomponents
+import spm
 
 // One input-to-output connection. Square-cornered and gapless: adjacent cells
 // share their rules, so the grid reads as a table rather than as loose tiles.
@@ -19,9 +20,11 @@ Rectangle {
     property string outputName: ""
 
     readonly property bool ranged: srcMin >= 0 || srcMax >= 0
-    readonly property string rangeText:
-        !ranged ? "all sources"
-                : "sources " + (srcMin < 0 ? "1" : srcMin) + "–" + (srcMax < 0 ? "∞" : srcMax)
+    // Shown in the cell only when it is not the default, so a plain connection
+    // stays a plain connection.
+    readonly property bool annotated: routed && (ranged || sourceOffset !== 0)
+    readonly property string routeText: Format.route(srcMin, srcMax, sourceOffset)
+    readonly property string cellText: Format.annotation(srcMin, srcMax, sourceOffset)
 
     signal toggled
     signal editRequested
@@ -37,7 +40,9 @@ Rectangle {
     // Right, then up: the turn is what reads as routing, and no font is
     // guaranteed to carry the glyph.
     Canvas {
-        anchors.centerIn: parent
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: root.annotated ? -7 : 0
         width: 24
         height: 24
         visible: root.routed
@@ -71,29 +76,20 @@ Rectangle {
         }
     }
 
-    // The offset and a narrowed range change what the arrow means, so both are
-    // legible without hovering.
+    // A narrowed range or an offset changes what the arrow means, so it is
+    // spelled out rather than coded into a corner mark.
     Text {
-        anchors.right: parent.right
+        anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.margins: 4
-        visible: root.routed && root.sourceOffset !== 0
-        text: "+" + root.sourceOffset
+        anchors.bottomMargin: 4
+        width: parent.width - 8
+        visible: root.annotated
+        text: root.cellText
         color: Theme.textColorOnAccent
         font.family: Theme.fontFamily
         font.pixelSize: Theme.fontSizeSmall
-        font.bold: true
-    }
-
-    Rectangle {
-        visible: root.routed && root.ranged
-        width: 7
-        height: 7
-        radius: 3.5
-        color: Theme.textColorOnAccent
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: 4
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
     }
 
     // Shared rules.
@@ -119,12 +115,8 @@ Rectangle {
 
     ToolTip.visible: hover.hovered
     ToolTip.delay: 400
-    ToolTip.text: root.inputName + " → " + root.outputName + "\n"
-                  + (root.routed
-                     ? root.rangeText
-                       + (root.sourceOffset !== 0 ? ", offset " + root.sourceOffset : "")
-                       + "\nright-click to edit"
-                     : "not connected — click to connect")
+    ToolTip.text: root.inputName + " to " + root.outputName + "\n"
+                  + (root.routed ? root.routeText : "not connected")
 
     TapHandler {
         acceptedButtons: Qt.LeftButton

@@ -105,7 +105,7 @@ Pane {
                 anchors.centerIn: parent
                 visible: monitorText.length === 0
                 color: Theme.textColorSecondary
-                text: "Waiting for messages…"
+                text: "No messages"
             }
         }
     }
