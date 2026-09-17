@@ -8,6 +8,8 @@ MonitorView            Views/MonitorView.qml
 # Presentation-only building blocks
 SectionHeader          Components/SectionHeader.qml
 OutputRow              Components/OutputRow.qml
-AccentButton           Components/AccentButton.qml
+DeviceField            Components/DeviceField.qml
+RowButton              Components/RowButton.qml
+InputRow               Components/InputRow.qml
 RouteEditDialog        Components/RouteEditDialog.qml
 MatrixCell             Components/MatrixCell.qml

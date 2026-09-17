@@ -25,16 +25,7 @@ Pane {
         anchors.margins: Theme.padding
         spacing: Theme.spacing
 
-        CustomLabel {
-            text: "Message monitor"
-            font.bold: true
-            font.pixelSize: Theme.fontSizeTitle
-        }
-
-        SectionHeader {
-            text: "Capture"
-            hint: "messages are only formatted while this tab is open"
-        }
+        SectionHeader { text: "Messages" }
 
         RowLayout {
             Layout.fillWidth: true

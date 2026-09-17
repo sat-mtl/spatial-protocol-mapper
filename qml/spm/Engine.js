@@ -642,6 +642,38 @@ function removeInput(id) {
     }
 }
 
+function updateInput(id, props) {
+    const inp = findInput(id);
+    if (!inp) return;
+
+    if (props.name !== undefined) inp.name = props.name;
+    if (props.protocol !== undefined && props.protocol !== inp.protocol) {
+        inp.protocol = props.protocol;
+        // The accumulated coordinates describe the previous reading.
+        inp.admState = {};
+        inp.spatState = {};
+    }
+    if (props.port !== undefined) {
+        // The field hands back a string; a socket wants a number.
+        const port = parsePort(props.port);
+        // Refuse a port another input already holds: the bind would fail at
+        // the OS level and leave a device that looks live but never receives.
+        if (port !== null && port !== inp.port && !portInUse(port, id)) {
+            inp.port = port;
+            if (inp.enabled) openInput(inp);
+        }
+    }
+
+    updateInputList();
+    saveConfiguration();
+}
+
+// null when the text is not a usable port, so callers can keep what they had.
+function parsePort(value) {
+    const n = parseInt(value);
+    return (isNaN(n) || n < 1 || n > 65535) ? null : n;
+}
+
 function setInputPort(id, port) {
     const inp = findInput(id);
     if (!inp || inp.port === port) return;
@@ -723,6 +755,32 @@ function createOutput(name, host, port, protocol) {
     return dev;
 }
 
+// Fields are edited directly in the list; host and port changes have to
+// reopen the socket, the rest are labels.
+function updateOutput(id, props) {
+    const out = findOutput(id);
+    if (!out) return;
+
+    let rebind = false;
+    if (props.name !== undefined) out.name = props.name;
+    if (props.protocol !== undefined) out.protocol = props.protocol;
+    if (props.host !== undefined && props.host !== out.host) {
+        out.host = props.host;
+        rebind = true;
+    }
+    if (props.port !== undefined) {
+        const port = parsePort(props.port);
+        if (port !== null && port !== out.port) {
+            out.port = port;
+            rebind = true;
+        }
+    }
+
+    if (rebind) openOutputSocket(out);
+    updateOutputList();
+    saveConfiguration();
+}
+
 function removeOutput(id) {
     for (let i = 0; i < outputs.length; i++) {
         if (outputs[i].id !== id) continue;
@@ -775,39 +833,6 @@ function otherFeedersOf(inputId, outputId) {
         if (inp) names.push(inp.name);
     }
     return names;
-}
-
-// Where each output's sources land once every enabled route into it has had
-// its range clipped and its offset applied. Splitting one sender across
-// renderers by source id is exactly what makes two routes collide on the same
-// index, so the matrix says so rather than letting it be found by ear.
-function outputCoverage(outputId) {
-    const spans = [];
-    for (let r of routes) {
-        if (r.outputId !== outputId || !r.enabled) continue;
-        const off = r.sourceOffset || 0;
-        const lo = ((r.srcMin === null || r.srcMin === undefined) ? 1 : r.srcMin) + off;
-        const hi = (r.srcMax === null || r.srcMax === undefined)
-                   ? Number.POSITIVE_INFINITY : r.srcMax + off;
-        spans.push({ lo: lo, hi: hi });
-    }
-    if (spans.length === 0)
-        return { text: "", collision: false, count: 0 };
-
-    spans.sort(function (a, b) { return a.lo - b.lo; });
-
-    let collision = false;
-    for (let i = 1; i < spans.length; i++) {
-        if (spans[i].lo <= spans[i - 1].hi) { collision = true; break; }
-    }
-
-    const parts = [];
-    for (let s of spans) {
-        if (s.hi === Number.POSITIVE_INFINITY) parts.push(s.lo + "+");
-        else if (s.lo === s.hi) parts.push(String(s.lo));
-        else parts.push(s.lo + "\u2013" + s.hi);
-    }
-    return { text: parts.join(", "), collision: collision, count: spans.length };
 }
 
 // Row-major (one input at a time), which is the order the matrix grid lays
@@ -898,7 +923,6 @@ function updateInputList() {
 function updateOutputList() {
     const rows = [];
     for (let out of outputs) {
-        const cov = outputCoverage(out.id);
         // Only display fields — the `udp` socket is a QObject and doesn't
         // belong in a ListModel.
         rows.push({
@@ -906,10 +930,7 @@ function updateOutputList() {
             name: out.name,
             host: out.host,
             port: out.port,
-            protocol: out.protocol,
-            coverage: cov.text,
-            collision: cov.collision,
-            feederCount: cov.count
+            protocol: out.protocol
         });
     }
     syncModel(outputListModel, rows, ["outputId"]);
