@@ -901,18 +901,6 @@ function setRoute(inputId, outputId, props) {
     return r;
 }
 
-// How many *other* inputs feed this output. Surfaced in the basic view so
-// removing a route there cannot silently leave the output still receiving.
-function otherFeedersOf(inputId, outputId) {
-    const names = [];
-    for (let r of routes) {
-        if (r.outputId !== outputId || r.inputId === inputId || !r.enabled) continue;
-        const inp = findInput(r.inputId);
-        if (inp) names.push(inp.name);
-    }
-    return names;
-}
-
 // Row-major (one input at a time), which is the order the matrix grid lays
 // its cells out in.
 function updateMatrixList() {
@@ -931,18 +919,6 @@ function updateMatrixList() {
         }
     }
     syncModel(matrixModel, rows, ["inputId", "outputId"]);
-}
-
-// Enable or disable every route along one row or column in one go -- muting a
-// destination, or silencing a sender, without walking every cell.
-function setRowEnabled(inputId, enabled) {
-    for (let out of outputs)
-        setRoute(inputId, out.id, { enabled: enabled });
-}
-
-function setColumnEnabled(outputId, enabled) {
-    for (let inp of inputs)
-        setRoute(inp.id, outputId, { enabled: enabled });
 }
 
 // ----- List models ------------------------------------------------------- //
@@ -1023,7 +999,6 @@ function updateRouteList(inputId) {
     const rows = [];
     for (let out of outputs) {
         const r = findRoute(inputId, out.id);
-        const others = otherFeedersOf(inputId, out.id);
         rows.push({
             outputId: out.id,
             name: out.name,
@@ -1033,8 +1008,7 @@ function updateRouteList(inputId) {
             routed: r ? r.enabled : false,
             sourceOffset: r ? (r.sourceOffset || 0) : 0,
             srcMin: (r && r.srcMin !== null && r.srcMin !== undefined) ? r.srcMin : -1,
-            srcMax: (r && r.srcMax !== null && r.srcMax !== undefined) ? r.srcMax : -1,
-            alsoFedBy: others.join(", ")
+            srcMax: (r && r.srcMax !== null && r.srcMax !== undefined) ? r.srcMax : -1
         });
     }
     syncModel(routeListModel, rows, ["outputId"]);

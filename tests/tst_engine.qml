@@ -10,7 +10,7 @@
 // not to assert an opinion.
 //
 // Run:
-//   QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -input tests/
+//   QT_QPA_PLATFORM=offscreen /usr/lib/qt6/bin/qmltestrunner -import qml -input tests/
 //
 // Only the pure parse/map functions are exercised. Everything below
 // `----- Output device lifecycle -----` in Engine.js touches the QML root

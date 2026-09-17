@@ -292,30 +292,6 @@ ApplicationWindow {
         refresh();
     }
 
-    // Toggling a whole line flips it to whatever it mostly is not, so one
-    // click clears a full row and a second click fills it.
-    function toggleRow(inputId) {
-        let on = 0;
-        for (let out of outputs) {
-            const r = Engine.findRoute(inputId, out.id);
-            if (r && r.enabled) on++;
-        }
-        Engine.setRowEnabled(inputId, on < outputs.length);
-        Engine.saveConfiguration();
-        refresh();
-    }
-
-    function toggleColumn(outputId) {
-        let on = 0;
-        for (let inp of inputs) {
-            const r = Engine.findRoute(inp.id, outputId);
-            if (r && r.enabled) on++;
-        }
-        Engine.setColumnEnabled(outputId, on < inputs.length);
-        Engine.saveConfiguration();
-        refresh();
-    }
-
     function clearLog() {
         Engine.clearLogs();
     }

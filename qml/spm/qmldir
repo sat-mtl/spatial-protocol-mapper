@@ -7,7 +7,7 @@ MonitorView            Views/MonitorView.qml
 
 # Presentation-only building blocks
 singleton Columns      Components/Columns.qml
-singleton ScaleFormat  Components/ScaleFormat.qml
+singleton Format       Components/Format.qml
 SectionHeader          Components/SectionHeader.qml
 TableHeader            Components/TableHeader.qml
 OutputRow              Components/OutputRow.qml

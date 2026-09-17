@@ -104,7 +104,7 @@ Rectangle {
 
         RowButton {
             Layout.preferredWidth: Columns.route
-            text: ScaleFormat.summary(root.scaleX, root.scaleY, root.scaleZ)
+            text: Format.scale(root.scaleX, root.scaleY, root.scaleZ)
             onClicked: root.scaleEditRequested()
         }
 

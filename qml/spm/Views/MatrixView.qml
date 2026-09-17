@@ -140,7 +140,7 @@ Pane {
                                 ToolTip.visible: headerHover.hovered
                                 ToolTip.delay: 400
                                 ToolTip.text: model.name + "\n" + model.protocol
-                                              + " · " + model.host + ":" + model.port
+                                              + ", " + model.host + ":" + model.port
                                 HoverHandler { id: headerHover }
 
                                 Rectangle {
@@ -273,7 +273,7 @@ Pane {
                                     routeDialog.inputId = model.inputId;
                                     routeDialog.outputId = model.outputId;
                                     routeDialog.editRoute(
-                                        inputName + "  →  " + outputName,
+                                        inputName + " to " + outputName,
                                         model.sourceOffset, model.srcMin, model.srcMax);
                                 }
                             }

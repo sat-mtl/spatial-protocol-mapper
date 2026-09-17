@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import ca.qc.sat.qmlcomponents
 import spm
@@ -19,16 +18,7 @@ Rectangle {
     // -1 on either bound means every source.
     property int srcMin: -1
     property int srcMax: -1
-    // The other inputs feeding this output, empty when it is only fed from the
-    // selected one. Without it, unrouting here looks like it did nothing.
-    property string alsoFedBy: ""
-
-    readonly property string rangeText:
-        (srcMin < 0 && srcMax < 0)
-        ? "all sources"
-        : (srcMin < 0 ? "1" : srcMin) + "–" + (srcMax < 0 ? "∞" : srcMax)
-    readonly property string routeText:
-        rangeText + (sourceOffset !== 0 ? "  +" + sourceOffset : "")
+    readonly property string routeText: Format.route(srcMin, srcMax, sourceOffset)
 
     signal routedToggled(bool value)
     signal nameEdited(string value)
@@ -66,23 +56,6 @@ Rectangle {
             Layout.minimumWidth: Columns.minName
             committed: root.name
             onCommit: value => root.nameEdited(value)
-
-            // Fed from more than one input: shown on the field so removing the
-            // route here cannot look like it did nothing.
-            ToolTip.visible: root.alsoFedBy !== "" && fedHover.hovered
-            ToolTip.text: "Also fed by " + root.alsoFedBy
-            HoverHandler { id: fedHover }
-
-            Rectangle {
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.rightMargin: 8
-                visible: root.alsoFedBy !== ""
-                width: 6
-                height: 6
-                radius: 3
-                color: Theme.textColorSecondary
-            }
         }
 
         DeviceField {

@@ -117,16 +117,10 @@ Dialog {
 
         CustomLabel {
             Layout.preferredWidth: 320
-            wrapMode: Text.WordWrap
+            visible: !root.rangeValid
+            color: Theme.errorColor
             font.pixelSize: Theme.fontSizeSmall
-            color: root.rangeValid ? Theme.textColorSecondary : Theme.errorColor
-            text: !root.rangeValid
-                  ? "The first source must not be greater than the last."
-                  : allSources.checked
-                    ? "Every source on this input reaches this output."
-                    : "Sources outside this range are dropped for this route only. "
-                      + "The range is matched before the offset is applied, so "
-                      + "these are the numbers on the sender."
+            text: "Invalid range"
         }
     }
 
