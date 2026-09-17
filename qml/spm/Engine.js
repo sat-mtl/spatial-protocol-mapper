@@ -92,12 +92,8 @@ function onInputValueReceived(inp, address, value) {
     // Angles and axes use SpatGRIS conventions internally
     // (negative azimuth = left). Each output's mapper applies its own flips.
     //
-    // This runs even when nothing is routed from this input. ADM and SPAT send
-    // one parameter per message and the parser accumulates them per source, so
-    // skipping it while every route is disabled would leave that state cold:
-    // the first message after a route is switched back on would carry spec
-    // defaults for every axis the sender had not just written, and the source
-    // would jump. Only the scaling and the dispatch below are worth skipping.
+    // Parsed unconditionally: ADM and SPAT accumulate one parameter per
+    // message, and that state has to stay current even while nothing is routed.
     const parsed = parseInput(inp, address, value);
 
     const links = g_linksByInput[inp.id];
@@ -212,9 +208,8 @@ function inputHasScale(inp) {
         || scaleOf(inp, "scaleZ") !== 1;
 }
 
-// Returns a new normalized message, or the one it was given when there is
-// nothing to do — so an unscaled input keeps today's exact values and pays
-// nothing for the feature.
+// Returns the message it was given when the scale is identity, so an unscaled
+// input keeps its exact values.
 function applyInputScale(inp, norm) {
     if (!norm || !inputHasScale(inp)) return norm;
 
@@ -223,9 +218,8 @@ function applyInputScale(inp, norm) {
     const sz = scaleOf(inp, "scaleZ");
     const a = norm.args;
 
-    // Note what is *not* carried over: `legacyArgs`. A SpatGRIS output re-emits
-    // that payload verbatim, which would put the unscaled position back on the
-    // wire and silently ignore the input's scaling.
+    // `legacyArgs` is deliberately not carried over: a SpatGRIS output re-emits
+    // it verbatim, which would put the unscaled position on the wire.
     switch (norm.command) {
     case "car":
         if (a.length < 3) return norm;
@@ -237,8 +231,7 @@ function applyInputScale(inp, norm) {
     case "pol":
     case "deg": {
         if (a.length < 3) return norm;
-        // Polar is scaled by going through cartesian and back. That is a
-        // float round trip, which is why identity returns early above.
+        // Polar is scaled through cartesian and back.
         const toRad = (norm.command === "deg") ? Math.PI / 180 : 1;
         const p = sphericalToCartesian(a[0] * toRad, a[1] * toRad, a[2]);
         const q = cartesianToSpherical(p.x * sx, p.y * sy, p.z * sz);
@@ -655,14 +648,10 @@ function openInput(inp) {
     // released before we bind again. Each closure captures its own device;
     // nothing here touches shared state.
     Qt.callLater(function () {
-        // The device can be removed or switched off between asking for the
-        // bind and this running, and a pending callLater cannot be cancelled.
-        // Without these two checks the closure would bind a socket nothing
-        // references, or revive an input the user has just turned off.
+        // A pending callLater cannot be cancelled, so re-check that the device
+        // still exists, is still wanted, and has not already been bound.
         if (inputs.indexOf(inp) < 0) return;
         if (!inp.enabled) return;
-        // A second openInput before this fired already installed its own
-        // socket; binding again would leak this one and fail on the port.
         if (inp.udp) return;
 
         try {
@@ -682,8 +671,6 @@ function openInput(inp) {
                 }
             });
         } catch (e) {
-            // openOutputSocket has always guarded this; the inbound side
-            // reported a failed bind but not a throwing one.
             console.log("Failed to listen on", inp.port, e);
             inp.udp = null;
         }
@@ -762,13 +749,9 @@ function updateInput(id, props) {
         // The field hands back a string; a socket wants a number.
         const port = parsePort(props.port);
         if (port === null) {
-            // Say so. updateInputList() below republishes the old port, so an
-            // unreported rejection just snaps the field back with no reason.
             inp.error = "Invalid port";
         } else if (port !== inp.port) {
-            // Refuse a port another input already holds: the bind would fail
-            // at the OS level and leave a device that looks live but never
-            // receives.
+            // Two inputs on one port: the second bind fails at the OS level.
             if (portInUse(port, id)) {
                 inp.error = "Port " + port + " is already used by another input";
             } else {
@@ -1059,12 +1042,9 @@ function restoreConfiguration() {
     if (cfg && cfg.version === 2 && cfg.inputs && cfg.inputs.length > 0) {
         restoreV2(cfg);
     } else if (raw !== "") {
-        // Something was stored and we could not use it. Come up with a working
-        // default, but do NOT migrate: migrateFromV1() ends in
-        // saveConfiguration(), which would overwrite the only copy of whatever
-        // the user actually had with a v1-derived guess. A truncated write is
-        // indistinguishable from a first run at this level, so the stored
-        // bytes stay put until the user changes something deliberately.
+        // Stored but unusable. Come up with a working default and leave the
+        // stored bytes alone: migrateFromV1() ends in saveConfiguration(),
+        // which would overwrite them with a v1-derived guess.
         console.log("Saved configuration unusable; keeping the stored copy.");
         createInput("Input 1", appSettings.listenPort, "Auto");
     } else {
@@ -1076,11 +1056,9 @@ function restoreConfiguration() {
     updateOutputList();
 }
 
-// An entry with no id, or one shared with another device, cannot be restored:
-// Math.max against undefined yields NaN, and NaN never compares equal to
-// itself, so every later id would be unfindable and no route could ever be
-// matched again. A duplicate is just as bad -- findOutput returns the first,
-// so routes meant for the second would silently retarget.
+// Devices are addressed by id, so an entry without one, or sharing one, cannot
+// be restored. An undefined id would also make g_nextId NaN, and NaN never
+// compares equal to itself.
 function usableDevices(list) {
     const seen = {};
     const out = [];

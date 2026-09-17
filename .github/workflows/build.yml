@@ -52,13 +52,8 @@ jobs:
         id: score
         uses: ossia/actions/custom-score-build@master
         with:
-          # score's deployment feature check is fatal under
-          # SCORE_STRICT_FEATURE_CHECK, which its macOS, Windows and AppImage
-          # recipes all set. This app is an OSC router and deliberately builds
-          # without gfx, media and avnd, so hap/gpu_js/analysis_kfr/v4l2 and
-          # friends are genuinely absent and the check has nothing to tell us.
-          # SCORE_EXTRA_CMAKE_ARGS is appended last by every recipe, so this
-          # wins over their -DSCORE_STRICT_FEATURE_CHECK=1.
+          # This app ships without gfx, media and avnd, so score's deployment
+          # feature check has nothing useful to assert. Left strict it is fatal.
           cmake-options: -DSCORE_STRICT_FEATURE_CHECK=0 -DSCORE_ENABLE_ADDONS=score-addon-spatgris -DSCORE_DISABLE_PLUGINS=score-plugin-faust,score-plugin-jit,score-plugin-vst,score-plugin-vst3,score-plugin-clap,score-plugin-lv2,score-plugin-avnd,score-plugin-pd,score-plugin-ysfx,score-plugin-packagemanager,score-plugin-controlsurface,score-plugin-gfx,score-plugin-media,score-plugin-spline3d,score-plugin-recording,score-plugin-nodal,score-plugin-spline,score-plugin-mapping -DSCORE_QT_PLUGINS_NO_QTQUICK3D=1 -DSCORE_QT_PLUGINS_NO_IMAGEFORMATS=1
           target-arch: ${{ matrix.target-arch || '' }}
           target-platform: ${{ matrix.target-platform || '' }}

@@ -7,8 +7,7 @@ CustomTextField {
     id: root
 
     // The stored value. Typing detaches the field from it; it is reapplied
-    // whenever the model changes underneath, including when a commit is
-    // rejected and the old value comes back.
+    // when the model changes underneath, and on losing focus.
     property string committed: ""
 
     signal commit(string value)
@@ -16,8 +15,7 @@ CustomTextField {
     text: committed
     onCommittedChanged: if (!activeFocus) reset()
 
-    // A name longer than the field would otherwise sit scrolled to its end,
-    // showing "…tudio ADM" instead of the start.
+    // Without the rewind, a name longer than the field sits scrolled to its end.
     function reset() {
         text = committed;
         cursorPosition = 0;
