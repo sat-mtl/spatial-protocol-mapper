@@ -38,7 +38,7 @@ jobs:
           - os: ubuntu-24.04
             platform: wasm
             artifact-name: wasm
-            artifact-path: packages/*.zip
+            artifact-file: '*.zip'
             target-platform: wasm
 
     steps:
@@ -92,8 +92,8 @@ jobs:
       - name: Upload packages
         uses: actions/upload-artifact@v7
         with:
-          name: app-${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-path || 'packages/' }}
+          name: spm-${{ matrix.artifact-name }}
+          path: packages/${{ matrix.artifact-file || '' }}
           retention-days: 30
 
   release:
@@ -108,7 +108,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: all-packages
-          pattern: app-*
+          pattern: spm-*
           merge-multiple: true
 
       - name: Create Release (on tags)
