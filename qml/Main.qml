@@ -39,13 +39,6 @@ ApplicationWindow {
         property string savedOutputDevices: "[]"
     }
 
-    // Dark unless the OS explicitly asks for light (Unknown reads as dark).
-    Binding {
-        target: Theme
-        property: "dark"
-        value: Application.styleHints.colorScheme !== Qt.ColorScheme.Light
-    }
-
     palette {
         text: Theme.textColor
         windowText: Theme.textColor
@@ -319,7 +312,7 @@ ApplicationWindow {
         // Relative paths would resolve against AboutDialog.qml in the submodule.
         logoPath: Qt.resolvedUrl("spm/resources/images/logo.png")
         partnerLogos: [
-            { source: Qt.resolvedUrl("spm/resources/images/sat_logo.png"), website: "https://www.sat.qc.ca" },
+            { source: Theme.satLogoSource, website: "https://www.sat.qc.ca" },
             { source: Qt.resolvedUrl("spm/resources/images/ossia_logo.png"), website: "https://ossia.io" }
         ]
     }
