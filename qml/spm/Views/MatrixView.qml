@@ -136,7 +136,7 @@ Pane {
 
                                 ToolTip.visible: headerHover.hovered
                                 ToolTip.delay: 400
-                                ToolTip.text: model.name + "\n" + model.protocol
+                                ToolTip.text: model.name + "\n" + model.protocolName
                                               + ", " + model.host + ":" + model.port
                                 HoverHandler { id: headerHover }
 

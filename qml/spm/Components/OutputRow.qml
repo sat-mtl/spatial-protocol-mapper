@@ -11,7 +11,11 @@ Rectangle {
     property string host: ""
     property int port: 0
     property string protocol: ""
-    property var protocols: []
+    property var protocolIds: []
+    property var protocolNames: []
+    property bool hasParams: false
+    // Handler trouble: not loaded, or it threw.
+    property string error: ""
 
     property bool routed: true
     property int sourceOffset: 0
@@ -25,6 +29,7 @@ Rectangle {
     signal hostEdited(string value)
     signal portEdited(string value)
     signal protocolEdited(string value)
+    signal paramsEditRequested
     signal routeEditRequested
     signal removeRequested
 
@@ -72,11 +77,15 @@ Rectangle {
             onCommit: value => root.portEdited(value)
         }
 
-        CustomComboBox {
+        ProtocolCell {
             Layout.preferredWidth: Columns.protocol
-            model: root.protocols
-            currentIndex: Math.max(0, root.protocols.indexOf(root.protocol))
-            onActivated: root.protocolEdited(currentText)
+            protocol: root.protocol
+            protocolIds: root.protocolIds
+            protocolNames: root.protocolNames
+            hasParams: root.hasParams
+            error: root.error
+            onProtocolEdited: id => root.protocolEdited(id)
+            onParamsEditRequested: root.paramsEditRequested()
         }
 
         RowButton {

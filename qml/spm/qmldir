@@ -4,6 +4,7 @@ module spm
 RoutingView            Views/RoutingView.qml
 MatrixView             Views/MatrixView.qml
 MonitorView            Views/MonitorView.qml
+HandlersView           Views/HandlersView.qml
 
 # Presentation-only building blocks
 singleton Columns      Components/Columns.qml
@@ -16,4 +17,7 @@ RowButton              Components/RowButton.qml
 InputRow               Components/InputRow.qml
 RouteEditDialog        Components/RouteEditDialog.qml
 InputScaleDialog       Components/InputScaleDialog.qml
+ParamsDialog           Components/ParamsDialog.qml
+ProtocolCell           Components/ProtocolCell.qml
+ScriptEditor           Components/ScriptEditor.qml
 MatrixCell             Components/MatrixCell.qml

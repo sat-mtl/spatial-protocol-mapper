@@ -37,6 +37,14 @@ ApplicationWindow {
         property string savedConfiguration: ""
         property int listenPort: 18032
         property string savedOutputDevices: "[]"
+
+        // URLs of user handler scripts (file:// or inline:), as a JSON array.
+        property string handlerScripts: "[]"
+        // Sources of the inline scripts written in the editor, by URL.
+        property string inlineScripts: "{}"
+
+        onLogReceivedMessagesChanged: Engine.updateLogging()
+        onLogSentMessagesChanged: Engine.updateLogging()
     }
 
     palette {
@@ -66,8 +74,14 @@ ApplicationWindow {
 
     color: Theme.backgroundColor
 
-    readonly property var outputProtocols: ["SpatGRIS", "ADM-OSC", "SPAT Revolution"]
-    readonly property var inputProtocols: ["Auto", "SpatGRIS", "ADM-OSC", "SPAT Revolution"]
+    // Protocol pickers list ids and names in parallel: handlers are picked by
+    // id and shown by name. Rebuilt by refresh(), since scripts come and go.
+    property var inputProtocolIds: []
+    property var inputProtocolNames: []
+    property var outputProtocolIds: []
+    property var outputProtocolNames: []
+    property var builtinOutputChoices: []
+    property var scriptedOutputChoices: []
     property alias settings: appSettings
 
     // ---- Engine state -------------------------------------------------- //
@@ -81,6 +95,7 @@ ApplicationWindow {
     property alias outputListModel: outputListModel
     property alias routeListModel: routeListModel
     property alias matrixModel: matrixModel
+    property alias handlerListModel: handlerListModel
 
     ListModel { id: inputListModel }
     ListModel { id: outputListModel }
@@ -88,11 +103,14 @@ ApplicationWindow {
     ListModel { id: routeListModel }
     // inputs x outputs, row-major, for the matrix grid.
     ListModel { id: matrixModel }
+    // Bundled handlers and user scripts, for the scripts view.
+    ListModel { id: handlerListModel }
 
     property alias messageMonitor: monitorView.messageMonitor
 
     // Formatting a log line costs more than the routing, so it is gated.
     readonly property bool monitorActive: currentViewIndex === monitorViewIndex
+    onMonitorActiveChanged: Engine.updateLogging()
 
     // ---- Current input -------------------------------------------------- //
     // Bindable mirrors: the engine's state is plain JS with no notifiers.
@@ -136,6 +154,15 @@ ApplicationWindow {
     }
 
     function refresh() {
+        const ins = Engine.protocolOptions("input");
+        inputProtocolIds = ins.ids;
+        inputProtocolNames = ins.names;
+        const outs = Engine.protocolOptions("output");
+        outputProtocolIds = outs.ids;
+        outputProtocolNames = outs.names;
+        builtinOutputChoices = Engine.outputChoices(true);
+        scriptedOutputChoices = Engine.outputChoices(false);
+
         Engine.updateInputList();
         Engine.updateOutputList();
         Engine.updateRouteList(currentInputId);
@@ -206,17 +233,12 @@ ApplicationWindow {
 
     // Adds a ready-to-edit output for that protocol, on its usual port.
     function addOutput(protocol) {
-        const defaults = {
-            "SpatGRIS": 18042,
-            "ADM-OSC": 9000,
-            "SPAT Revolution": 8088
-        };
         let n = 1;
         for (let o of outputs)
             if (o.protocol === protocol) n++;
 
-        const dev = Engine.createOutput(protocol + " " + n, "127.0.0.1",
-                                        defaults[protocol] || 8000, protocol);
+        const dev = Engine.createOutput(Engine.protocolName(protocol) + " " + n, "127.0.0.1",
+                                        Engine.defaultPortFor(protocol), protocol);
         if (currentInputId >= 0)
             Engine.setRoute(currentInputId, dev.id, { enabled: true });
         Engine.saveConfiguration();
@@ -279,16 +301,83 @@ ApplicationWindow {
         Engine.clearLogs();
     }
 
+    // ---- Handler settings and scripts ------------------------------------- //
+
+    function deviceOf(kind, id) {
+        return kind === "input" ? Engine.findInput(id) : Engine.findOutput(id);
+    }
+
+    // { specs, values } for the params dialog.
+    function deviceParams(kind, id) {
+        const dev = deviceOf(kind, id);
+        if (!dev) return { specs: [], values: {} };
+        return { specs: Engine.paramSpecs(dev.protocol), values: Engine.paramValues(dev) };
+    }
+
+    function setDeviceParams(kind, id, values) {
+        const dev = deviceOf(kind, id);
+        if (!dev) return;
+        Engine.setDeviceParams(dev, values, kind);
+        Engine.saveConfiguration();
+        refresh();
+    }
+
+    function addHandlerScript(url) {
+        Engine.addScript(url, function () { refresh(); });
+    }
+
+    function reloadHandlerScript(url) {
+        Engine.reloadScript(url);
+    }
+
+    function reloadHandlerScripts() {
+        Engine.reloadScripts();
+    }
+
+    // A new script stored in the settings, from the template. Returns its URL.
+    function newHandlerScript() {
+        const url = Engine.newInlineScript();
+        refresh();
+        return url;
+    }
+
+    function handlerScriptName(url) {
+        return Engine.scriptName(url);
+    }
+
+    // `done(source, error)`.
+    function handlerScriptSource(url, done) {
+        Engine.readSource(url, done);
+    }
+
+    // Saves and loads the script; `done({ error, line, saved, running })`.
+    function applyHandlerScript(url, source, done) {
+        Engine.applyScript(url, source, function (result) {
+            refresh();
+            done(result);
+        });
+    }
+
+    function removeHandlerScript(url) {
+        Engine.removeScript(url);
+        refresh();
+    }
+
     // ---- Views ----------------------------------------------------------- //
     readonly property int routingViewIndex: 0
     readonly property int matrixViewIndex: 1
     readonly property int monitorViewIndex: 2
+    readonly property int handlersViewIndex: 3
     property int currentViewIndex: appSettings.lastViewIndex
     onCurrentViewIndexChanged: appSettings.lastViewIndex = currentViewIndex
 
     // ---- Lifecycle -------------------------------------------------------- //
     Component.onCompleted: {
+        Engine.updateLogging();
         Engine.restoreConfiguration();
+        // Asynchronous: devices on a scripted protocol pick it up on arrival.
+        Engine.loadSavedScripts();
+        Engine.updateHandlerList();
         if (inputs.length > 0)
             currentInputId = inputs[0].id;
         refresh();
@@ -307,7 +396,7 @@ ApplicationWindow {
         appName: "Spatial Protocol Mapper"
         appDescription: "A tool developed by the Société des Arts Technologiques"
         appDetails: "Route and translate spatial audio positioning between "
-                    + "SpatGRIS, ADM-OSC and SPAT Revolution over OSC."
+                    + "SpatGRIS, ADM-OSC, SPAT Revolution and scripted protocols over OSC."
         appWebsite: "https://github.com/sat-mtl/spatial-protocol-mapper"
         // Relative paths would resolve against AboutDialog.qml in the submodule.
         logoPath: Qt.resolvedUrl("spm/resources/images/logo.png")
@@ -372,6 +461,14 @@ ApplicationWindow {
                     onClicked: window.currentViewIndex = window.monitorViewIndex
                 }
 
+                CustomButton {
+                    text: "SCRIPTS"
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.spacing
+                    isActive: window.currentViewIndex === window.handlersViewIndex
+                    onClicked: window.currentViewIndex = window.handlersViewIndex
+                }
+
                 Item { Layout.fillHeight: true }
             }
         }
@@ -384,6 +481,7 @@ ApplicationWindow {
             RoutingView { controller: window }
             MatrixView { controller: window }
             MonitorView { id: monitorView; controller: window }
+            HandlersView { controller: window }
         }
     }
 }
