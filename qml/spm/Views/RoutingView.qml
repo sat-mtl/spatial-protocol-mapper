@@ -24,6 +24,23 @@ Pane {
                              inputId, { scaleX: x, scaleY: y, scaleZ: z })
     }
 
+    ParamsDialog {
+        id: paramsDialog
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+
+        property string kind: ""
+        property int deviceId: -1
+        onParamsAccepted: values => root.controller.setDeviceParams(kind, deviceId, values)
+    }
+
+    function editParams(kind, id, name) {
+        paramsDialog.kind = kind;
+        paramsDialog.deviceId = id;
+        const p = root.controller.deviceParams(kind, id);
+        paramsDialog.editParams(name, p.specs, p.values);
+    }
+
     RouteEditDialog {
         id: routeDialog
         parent: Overlay.overlay
@@ -88,7 +105,9 @@ Pane {
                         protocol: model.protocol
                         listening: model.enabled
                         error: model.error
-                        protocols: root.controller.inputProtocols
+                        protocolIds: root.controller.inputProtocolIds
+                        protocolNames: root.controller.inputProtocolNames
+                        hasParams: model.hasParams
                         scaleX: model.scaleX
                         scaleY: model.scaleY
                         scaleZ: model.scaleZ
@@ -102,6 +121,7 @@ Pane {
                         onPortEdited: value => root.controller.updateInput(model.inputId, { port: value })
                         onProtocolEdited: value => root.controller.updateInput(model.inputId, { protocol: value })
                         onRemoveRequested: root.controller.removeInput(model.inputId)
+                        onParamsEditRequested: root.editParams("input", model.inputId, model.name)
                         onScaleEditRequested: {
                             scaleDialog.inputId = model.inputId;
                             scaleDialog.editScale(model.name, model.scaleX,
@@ -179,7 +199,10 @@ Pane {
                         host: model.host
                         port: model.port
                         protocol: model.protocol
-                        protocols: root.controller.outputProtocols
+                        protocolIds: root.controller.outputProtocolIds
+                        protocolNames: root.controller.outputProtocolNames
+                        hasParams: model.hasParams
+                        error: model.error
                         routed: model.routed
                         sourceOffset: model.sourceOffset
                         srcMin: model.srcMin
@@ -191,6 +214,7 @@ Pane {
                         onPortEdited: value => root.controller.updateOutput(model.outputId, { port: value })
                         onProtocolEdited: value => root.controller.updateOutput(model.outputId, { protocol: value })
                         onRemoveRequested: root.controller.removeOutput(model.outputId)
+                        onParamsEditRequested: root.editParams("output", model.outputId, model.name)
                         onRouteEditRequested: {
                             routeDialog.outputId = model.outputId;
                             routeDialog.editRoute(
@@ -213,15 +237,37 @@ Pane {
             Layout.fillWidth: true
             spacing: Theme.spacing
 
+            // Bundled protocols get a button each; scripted ones share a menu.
             Repeater {
-                model: root.controller.outputProtocols
+                model: root.controller.builtinOutputChoices
 
                 CustomButton {
                     required property var modelData
                     Layout.preferredWidth: 160
                     height: Theme.buttonHeight
-                    text: "+ " + modelData
-                    onClicked: root.controller.addOutput(modelData)
+                    text: "+ " + modelData.name
+                    onClicked: root.controller.addOutput(modelData.id)
+                }
+            }
+
+            CustomButton {
+                id: scriptedButton
+                Layout.preferredWidth: 160
+                height: Theme.buttonHeight
+                visible: root.controller.scriptedOutputChoices.length > 0
+                text: "+ Scripted…"
+                onClicked: scriptedMenu.popup(scriptedButton, 0, scriptedButton.height)
+
+                Menu {
+                    id: scriptedMenu
+                    Repeater {
+                        model: root.controller.scriptedOutputChoices
+                        MenuItem {
+                            required property var modelData
+                            text: modelData.name
+                            onTriggered: root.controller.addOutput(modelData.id)
+                        }
+                    }
                 }
             }
 

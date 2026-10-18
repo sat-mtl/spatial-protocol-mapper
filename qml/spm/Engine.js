@@ -1,19 +1,32 @@
 .import "LogQueue.js" as LogQueue
+.import "Handlers.js" as Handlers
+.import "handlers/Spm.js" as Spm
+.import "handlers/Template.js" as Template
 
 // Routing engine.
 //
 // Any number of inputs and outputs, with an explicit route per connection.
 //
-//   inputs  [{ id, name, protocol, port, listening, error, udp, osc, admState }]
-//   outputs [{ id, name, protocol, host, port, udp }]
+//   inputs  [{ id, name, protocol, port, listening, error, params, udp, osc, rt }]
+//   outputs [{ id, name, protocol, host, port, params, udp, rt }]
 //   routes  [{ inputId, outputId, enabled, sourceOffset, srcMin, srcMax }]
 //
 // `srcMin`/`srcMax` are null when the route carries every source. The filter
 // tests the *incoming* source index, before `sourceOffset` is applied, so the
 // numbers in the UI match the numbers on the sender.
 //
+// Protocols are handlers (Handlers.js, docs/HANDLERS.md). Each device holds a
+// runtime, `rt`, with its handler instance; it is built lazily and dropped
+// whenever the protocol, its params or its script change.
+//
 // Free variables (inputs, outputs, routes, appSettings, the list models,
 // messageMonitor, monitorActive, Protocols) resolve against Main.qml.
+
+// Read once: module property lookups do not belong on the message path.
+var POSITION = Spm.POSITION;
+var CLEAR = Spm.CLEAR;
+var ALGORITHM = Spm.ALGORITHM;
+var NATIVE = Spm.NATIVE;
 
 // ----- Identity --------------------------------------------------------- //
 // Routes reference devices by id, so ids must outlive any array position.
@@ -41,8 +54,21 @@ function findRoute(inputId, outputId) {
     return null;
 }
 
+// ----- Logging ---------------------------------------------------------- //
+// Formatting a log line costs more than the routing, so the message path only
+// tests these. The window calls updateLogging() whenever an input to them
+// changes.
+var g_logIn = false;
+var g_logOut = false;
+
+function updateLogging() {
+    g_logIn = !!(appSettings.logReceivedMessages && monitorActive);
+    g_logOut = !!(appSettings.logSentMessages && monitorActive);
+}
+
 // ----- Dispatch index --------------------------------------------------- //
-// Rebuilt on every structural change; the message path only reads it.
+// Rebuilt on every structural change; the message path only reads it. Each
+// link carries everything dispatch needs, so no lookup happens per message.
 var g_linksByInput = {};
 
 function reindexRoutes() {
@@ -51,9 +77,27 @@ function reindexRoutes() {
         if (!r.enabled) continue;
         const out = findOutput(r.outputId);
         if (!out) continue;
+
+        let rt = out.rt;
+        if (!rt || rt.protocol !== out.protocol)
+            rt = attachOutput(out);
+        const enc = rt.enc;
+
         if (!g_linksByInput[r.inputId])
             g_linksByInput[r.inputId] = [];
-        g_linksByInput[r.inputId].push({ route: r, output: out });
+        g_linksByInput[r.inputId].push({
+            route: r,
+            output: out,
+            entry: rt.entry,
+            enc: enc,
+            offset: r.sourceOffset || 0,
+            min: (r.srcMin === null || r.srcMin === undefined) ? -Infinity : r.srcMin,
+            max: (r.srcMax === null || r.srcMax === undefined) ? Infinity : r.srcMax,
+            position: !!enc && typeof enc.position === "function",
+            clear: !!enc && typeof enc.clear === "function",
+            algorithm: !!enc && typeof enc.algorithm === "function",
+            native: !!enc && typeof enc.native === "function"
+        });
     }
 }
 
@@ -69,126 +113,392 @@ function routeAccepts(route, sourceIndex) {
 }
 
 // ----- Message path ----------------------------------------------------- //
+// Steady state allocates nothing here: the event is the input's own, the
+// address resolves through a per-input cache, and encoders send from buffers
+// they allocated once. Score's udp.osc() copies its arguments before
+// returning (libossia protocols_sender::send_osc), which is what makes reusing
+// those buffers safe.
+
+var ADDRESS_CACHE_MAX = 4096;
 
 function onInputValueReceived(inp, address, value) {
-    if (appSettings.logReceivedMessages && monitorActive) {
+    if (g_logIn)
         LogQueue.pushInput(`IN  [${inp.name}] ${address} = ${JSON.stringify(value)}`);
-    }
 
-    // Normalize the incoming message to an internal SpatGRIS-style form:
-    //   command    : "pol" | "deg" | "car" | "clr" | "alg"
-    //   sourceIndex: 1-based source index (or -1 if n/a)
-    //   args       : command-dependent payload
-    //     pol   : [azimuthRad, elevationRad, radius, hspan, vspan]
-    //     deg   : [azimuthDeg, elevationDeg, radius, hspan, vspan]
-    //     car   : [x, y, z, hspan, vspan]
-    //     clr   : []
-    //     alg   : [algorithm]
-    // Angles and axes use SpatGRIS conventions internally
-    // (negative azimuth = left). Each output's mapper applies its own flips.
-    //
-    // Parsed unconditionally: ADM and SPAT accumulate one parameter per
+    let rt = inp.rt;
+    if (rt === undefined || rt === null)
+        rt = attachInput(inp);
+
+    let e = rt.cache.get(address);
+    if (e === undefined)
+        e = resolveAddress(rt, address);
+
+    const ev = rt.ev;
+    resetEvent(ev);
+    rt.emitted = false;
+
+    // Decoded unconditionally: ADM and SPAT accumulate one parameter per
     // message, and that state has to stay current even while nothing is routed.
-    const parsed = parseInput(inp, address, value);
+    let decoded = false;
+    if (e.fn !== null) {
+        try {
+            decoded = e.fn(e.n, value, ev, address) === true;
+        } catch (err) {
+            handlerThrew(inp, e.decoder.entry, err);
+        }
+    }
 
     const links = g_linksByInput[inp.id];
-    if (!links || links.length === 0) return;
+    if (links === undefined || links.length === 0) return;
 
-    const norm = applyInputScale(inp, parsed);
-
-    if (norm) {
-        for (let link of links) {
-            const out = link.output;
-            if (!out.udp) continue;
-            if (!routeAccepts(link.route, norm.sourceIndex)) continue;
-
-            const idx = norm.sourceIndex + (link.route.sourceOffset || 0);
-            const mapped = mapMessage(norm.command, idx, norm.args, out.protocol, norm);
-            if (!mapped || mapped.length === 0) continue;
-
-            for (let msg of mapped) {
-                // outboundUDP.osc() expects a JS array for the arguments —
-                // wrap scalar values so "/a/b" with value 0 doesn't crash.
-                const oscArgs = Array.isArray(msg.value) ? msg.value : [msg.value];
-                out.udp.osc(msg.address, oscArgs);
-                if (appSettings.logSentMessages && monitorActive) {
-                    LogQueue.pushOutput(`OUT [${out.name}] ${msg.address} = ${JSON.stringify(msg.value)}`);
-                }
-            }
-        }
+    if (decoded && ev.type !== 0) {
+        routeEvent(inp, links, ev);
         return;
     }
+    if (rt.emitted) return;
 
-    // Messages we couldn't translate that still belong to a protocol
-    // we have outputs for: pass them through verbatim. This lets
-    // ADM-specific features (gain, mute, name, /adm/lis, /adm/env, …)
-    // reach ADM-OSC outputs even though we don't understand them.
-    if (address.startsWith("/adm/")) {
-        forwardAdmRaw(inp, links, address, value);
+    // Nothing understood it, but a protocol claims its address space: pass it
+    // through verbatim to that protocol's outputs. This is how ADM gain, mute,
+    // /adm/lis, /adm/env, … reach ADM-OSC outputs.
+    if (e.nativeProtocol !== null) {
+        ev.type = NATIVE;
+        ev.source = e.nativeSource;
+        ev.nativeProtocol = e.nativeProtocol;
+        ev.nativeAddress = address;
+        ev.nativeArgs = Array.isArray(value) ? value : [value];
+        dispatch(links, ev);
     }
 }
 
-// An input declares what it speaks; "Auto" keeps the original behaviour of
-// deciding from the address.
-function parseInput(inp, address, value) {
-    switch (inp.protocol) {
-    case "SpatGRIS":
-        return address.startsWith("/spat/serv") ? parseSpatGRISInput(value) : null;
-    case "ADM-OSC":
-        return address.startsWith("/adm/obj/") ? parseADMInput(inp, address, value) : null;
-    case "SPAT Revolution":
-        return address.startsWith("/source/") ? parseSPATInput(inp, address, value) : null;
-    }
-    if (address.startsWith("/spat/serv")) return parseSpatGRISInput(value);
-    if (address.startsWith("/adm/obj/")) return parseADMInput(inp, address, value);
-    if (address.startsWith("/source/")) return parseSPATInput(inp, address, value);
-    return null;
+function resetEvent(ev) {
+    ev.type = 0;
+    ev.source = -1;
+    ev.offset = 0;
+    ev.coords = Spm.SPHERICAL;
+    ev.radians = false;
+    ev.azimuth = 0; ev.elevation = 0; ev.distance = 1;
+    ev.x = 0; ev.y = 0; ev.z = 0;
+    ev.hspan = 0; ev.vspan = 0;
+    ev.value = null;
+    ev.nativeProtocol = null;
+    ev.nativeAddress = null;
+    ev.nativeArgs = null;
 }
 
-function forwardAdmRaw(inp, links, address, value) {
-    const oscArgs = Array.isArray(value) ? value : [value];
+// Per-input scaling, then every route.
+function routeEvent(inp, links, ev) {
+    if (ev.type === POSITION)
+        Spm.scaleEvent(ev, scaleOf(inp, "scaleX"), scaleOf(inp, "scaleY"), scaleOf(inp, "scaleZ"));
+    dispatch(links, ev);
+}
 
-    // Only /adm/obj/{n}/… carries a source index; /adm/lis and /adm/env don't.
-    // Both the range filter and the offset key off that.
-    const m = address.match(/^\/adm\/obj\/(\d+)(\/.*)$/);
-    const sourceIndex = m ? parseInt(m[1]) : -1;
+function dispatch(links, ev) {
+    const inSource = ev.source;
+    const type = ev.type;
+    for (let i = 0; i < links.length; i++) {
+        const l = links[i];
+        if (!l.output.udp) continue;
+        if (inSource >= 0 && (inSource < l.min || inSource > l.max)) continue;
 
-    for (let link of links) {
-        const out = link.output;
-        if (!out.udp) continue;
-        if (out.protocol !== "ADM-OSC") continue;
-        if (!routeAccepts(link.route, sourceIndex)) continue;
-
-        let outAddress = address;
-        const offset = link.route.sourceOffset || 0;
-        if (offset !== 0 && m) {
-            outAddress = `/adm/obj/${sourceIndex + offset}${m[2]}`;
+        ev.offset = l.offset;
+        ev.source = inSource + l.offset;
+        try {
+            switch (type) {
+            case POSITION:  if (l.position) l.enc.position(ev); break;
+            case CLEAR:     if (l.clear) l.enc.clear(ev); break;
+            case ALGORITHM: if (l.algorithm) l.enc.algorithm(ev); break;
+            case NATIVE:    if (l.native) l.enc.native(ev); break;
+            }
+        } catch (err) {
+            handlerThrew(l.output, l.entry, err);
         }
+    }
+    ev.source = inSource;
+    ev.offset = 0;
+}
 
-        out.udp.osc(outAddress, oscArgs);
-        if (appSettings.logSentMessages && monitorActive) {
-            LogQueue.pushOutput(`OUT [${out.name}] ${outAddress} = ${JSON.stringify(value)}`);
+// First sight of an address: which decoder function takes it, with which
+// source index, and which protocol claims it if that decoder declines.
+function resolveAddress(rt, address) {
+    let fn = null, n = -1, decoder = null;
+    for (let d of rt.decoders) {
+        if (!address.startsWith(d.prefix)) continue;
+        // The first decoder whose prefix matches owns the address, matched or not.
+        decoder = d;
+        for (let pt of d.patterns) {
+            const m = Spm.matchPattern(pt.p, address);
+            if (m !== -2) { fn = pt.fn; n = m; break; }
         }
+        if (fn === null) fn = d.fallback;
+        break;
+    }
+
+    let nativeProtocol = null, nativeSource = -1;
+    for (let h of Handlers.all()) {
+        if (h.native === null || !address.startsWith(h.native.prefix)) continue;
+        nativeProtocol = h.id;
+        if (typeof h.native.source === "function") {
+            try {
+                const s = h.native.source(address);
+                nativeSource = (typeof s === "number" && s >= 0) ? s : -1;
+            } catch (err) {
+                nativeSource = -1;
+            }
+        }
+        break;
+    }
+
+    const e = { fn: fn, n: n, decoder: decoder,
+                nativeProtocol: nativeProtocol, nativeSource: nativeSource };
+    // A sender spraying unique addresses must not grow this without bound.
+    if (rt.cache.size >= ADDRESS_CACHE_MAX)
+        rt.cache.clear();
+    rt.cache.set(address, e);
+    return e;
+}
+
+// ----- Handler runtimes ------------------------------------------------- //
+
+// Inputs set to "Auto" run every decoder that declares an address prefix, in
+// registration order; the first prefix that matches an address owns it.
+function inputEntriesFor(protocol) {
+    if (protocol === "Auto") {
+        const list = [];
+        for (let h of Handlers.all())
+            if (h.hasInput && h.matches !== null) list.push(h);
+        return list;
+    }
+    const h = Handlers.get(protocol);
+    return (h !== null && h.hasInput) ? [h] : [];
+}
+
+function deviceInfo(dev) {
+    return { id: dev.id, name: dev.name };
+}
+
+function makeInputContext(inp, rt, entry) {
+    return {
+        device: deviceInfo(inp),
+        params: Handlers.resolveParams(entry, inp.protocol === "Auto" ? null : inp.params),
+        // Routes the event as it stands now, for a decoder that produces more
+        // than one per message (or produces one outside onMessage).
+        emit: function () {
+            const links = g_linksByInput[inp.id];
+            rt.emitted = true;
+            if (links === undefined || links.length === 0 || rt.ev.type === 0) return;
+            routeEvent(inp, links, rt.ev);
+        },
+        log: function (msg) { console.log(`[${entry.id}] ${inp.name}:`, msg); },
+        error: function (msg) { setHandlerError(inp, String(msg)); }
+    };
+}
+
+function makeOutputContext(out, entry) {
+    return {
+        device: deviceInfo(out),
+        params: Handlers.resolveParams(entry, out.params),
+        send: function (address, args) {
+            const u = out.udp;
+            if (!u) return;
+            if (!Array.isArray(args)) args = [args];
+            u.osc(address, args);
+            if (g_logOut)
+                LogQueue.pushOutput(`OUT [${out.name}] ${address} = ${JSON.stringify(args.length === 1 ? args[0] : args)}`);
+        },
+        log: function (msg) { console.log(`[${entry.id}] ${out.name}:`, msg); },
+        error: function (msg) { setHandlerError(out, String(msg)); }
+    };
+}
+
+function attachInput(inp) {
+    detachInput(inp);
+    const rt = {
+        protocol: inp.protocol,
+        ev: Spm.newEvent(),
+        cache: new Map(),
+        decoders: [],
+        emitted: false
+    };
+    inp.rt = rt;
+    inp.handlerError = "";
+    inp.handlerErrors = 0;
+
+    for (let h of inputEntriesFor(inp.protocol)) {
+        const ctx = makeInputContext(inp, rt, h);
+        let table = null;
+        try {
+            table = h.descriptor.createInput(ctx);
+        } catch (err) {
+            handlerThrew(inp, h, err);
+            continue;
+        }
+        if (!table || typeof table !== "object") continue;
+        const c = Handlers.compileInputTable(table);
+        rt.decoders.push({
+            entry: h,
+            prefix: h.matches || "",
+            patterns: c.patterns,
+            fallback: c.fallback,
+            table: table,
+            ctx: ctx
+        });
+    }
+    return rt;
+}
+
+function detachInput(inp) {
+    const rt = inp.rt;
+    inp.rt = null;
+    if (!rt) return;
+    for (let d of rt.decoders)
+        callDestroy(inp, d.entry, d.table);
+}
+
+function attachOutput(out) {
+    detachOutput(out);
+    const entry = Handlers.get(out.protocol);
+    const rt = { protocol: out.protocol, entry: entry, enc: null, ctx: null };
+    out.rt = rt;
+    out.handlerError = "";
+    out.handlerErrors = 0;
+    if (entry === null || !entry.hasOutput) return rt;
+
+    rt.ctx = makeOutputContext(out, entry);
+    try {
+        const enc = entry.descriptor.createOutput(rt.ctx);
+        rt.enc = (enc && typeof enc === "object") ? enc : null;
+    } catch (err) {
+        handlerThrew(out, entry, err);
+    }
+    return rt;
+}
+
+function detachOutput(out) {
+    const rt = out.rt;
+    out.rt = null;
+    if (rt && rt.enc)
+        callDestroy(out, rt.entry, rt.enc);
+}
+
+function callDestroy(dev, entry, instance) {
+    if (!instance || typeof instance.destroy !== "function") return;
+    try {
+        instance.destroy();
+    } catch (err) {
+        handlerThrew(dev, entry, err);
+    }
+}
+
+// Reported once per distinct message; the console gets the first throw and
+// then one line per thousand, so a handler failing on every message cannot
+// flood it.
+var ERROR_LOG_EVERY = 1000;
+
+function handlerThrew(dev, entry, err) {
+    dev.handlerErrors = (dev.handlerErrors || 0) + 1;
+    const text = Handlers.describeError(err);
+    if (dev.handlerErrors === 1 || dev.handlerErrors % ERROR_LOG_EVERY === 0)
+        console.log(`Handler ${entry ? entry.id : "?"} on ${dev.name} threw (${dev.handlerErrors}x):`, text);
+    setHandlerError(dev, "Handler error: " + text);
+}
+
+// The lists are rebuilt later, never from inside the message path.
+var g_listUpdatePending = false;
+
+function setHandlerError(dev, msg) {
+    if (dev.handlerError === msg) return;
+    dev.handlerError = msg;
+    if (g_listUpdatePending) return;
+    g_listUpdatePending = true;
+    Qt.callLater(function () {
+        g_listUpdatePending = false;
+        updateInputList();
+        updateOutputList();
+    });
+}
+
+// What the device's row shows when the socket itself is fine.
+function handlerStatus(dev, kind) {
+    if (dev.handlerError) return dev.handlerError;
+    if (kind === "input" && dev.protocol === "Auto") return "";
+    const h = Handlers.get(dev.protocol);
+    if (h === null) return "Handler not loaded: " + dev.protocol;
+    if (kind === "input" && !h.hasInput) return h.name + " has no input side";
+    if (kind === "output" && !h.hasOutput) return h.name + " has no output side";
+    return "";
+}
+
+// A script was loaded, reloaded or removed. Devices on that protocol get a new
+// instance; everyone's address cache goes, since a protocol may have claimed
+// or released an address space.
+function handlersChanged(id) {
+    for (let inp of inputs) {
+        if (inp.protocol === id || inp.protocol === "Auto")
+            detachInput(inp);
+        else if (inp.rt)
+            inp.rt.cache.clear();
+    }
+    for (let out of outputs)
+        if (out.protocol === id)
+            detachOutput(out);
+    reindexRoutes();
+}
+
+// ----- Params ------------------------------------------------------------ //
+
+function paramSpecs(protocol) {
+    const h = Handlers.get(protocol);
+    return h === null ? [] : h.params;
+}
+
+function hasParams(dev) {
+    return dev.protocol !== "Auto" && paramSpecs(dev.protocol).length > 0;
+}
+
+// The values the device's handler runs with, defaults filled in.
+function paramValues(dev) {
+    return Handlers.resolveParams(Handlers.get(dev.protocol), dev.params);
+}
+
+// Updates the live instance in place when it can take it (onParamsChanged),
+// and rebuilds it otherwise.
+function setDeviceParams(dev, values, kind) {
+    const h = Handlers.get(dev.protocol);
+    dev.params = Handlers.resolveParams(h, values);
+
+    const instances = [];
+    if (kind === "input" && dev.rt) {
+        for (let d of dev.rt.decoders) instances.push({ ctx: d.ctx, obj: d.table });
+    } else if (kind === "output" && dev.rt && dev.rt.ctx) {
+        instances.push({ ctx: dev.rt.ctx, obj: dev.rt.enc });
+    }
+
+    let rebuild = instances.length === 0;
+    for (let it of instances) {
+        if (!it.obj || typeof it.obj.onParamsChanged !== "function") { rebuild = true; break; }
+    }
+
+    if (!rebuild) {
+        for (let it of instances) {
+            const p = it.ctx.params;
+            for (let k in dev.params) p[k] = dev.params[k];
+            try {
+                it.obj.onParamsChanged();
+            } catch (err) {
+                handlerThrew(dev, h, err);
+            }
+        }
+    } else if (kind === "input") {
+        detachInput(dev);
+    } else {
+        attachOutput(dev);
+        reindexRoutes();
     }
 }
 
 // ----- Per-input scaling ------------------------------------------------ //
-// A negative factor mirrors that axis. Applied to the canonical form before
-// any route sees the message.
-//
-// SpatGRIS convention: azimuth is measured from the front (+y) toward the
-// right (+x), elevation from the horizon toward +z.
-function sphericalToCartesian(az, el, r) {
-    const ce = Math.cos(el);
-    return { x: r * ce * Math.sin(az), y: r * ce * Math.cos(az), z: r * Math.sin(el) };
-}
-
-function cartesianToSpherical(x, y, z) {
-    const r = Math.sqrt(x * x + y * y + z * z);
-    // At the origin there is no direction to report; asin(0/0) would be NaN.
-    if (r < 1e-12) return { az: 0, el: 0, r: 0 };
-    return { az: Math.atan2(x, y), el: Math.asin(z / r), r: r };
-}
+// A negative factor mirrors that axis. Applied to the event before any route
+// sees it (Spm.scaleEvent).
 
 function scaleOf(inp, axis) {
     const v = inp[axis];
@@ -199,423 +509,6 @@ function inputHasScale(inp) {
     return scaleOf(inp, "scaleX") !== 1
         || scaleOf(inp, "scaleY") !== 1
         || scaleOf(inp, "scaleZ") !== 1;
-}
-
-// Returns the message unchanged when the scale is identity.
-function applyInputScale(inp, norm) {
-    if (!norm || !inputHasScale(inp)) return norm;
-
-    const sx = scaleOf(inp, "scaleX");
-    const sy = scaleOf(inp, "scaleY");
-    const sz = scaleOf(inp, "scaleZ");
-    const a = norm.args;
-
-    // `legacyArgs` is not carried over: a SpatGRIS output re-emits it verbatim,
-    // which would put the unscaled position on the wire.
-    switch (norm.command) {
-    case "car":
-        if (a.length < 3) return norm;
-        return {
-            command: "car",
-            sourceIndex: norm.sourceIndex,
-            args: [a[0] * sx, a[1] * sy, a[2] * sz].concat(a.slice(3))
-        };
-    case "pol":
-    case "deg": {
-        if (a.length < 3) return norm;
-        // Polar is scaled through cartesian and back.
-        const toRad = (norm.command === "deg") ? Math.PI / 180 : 1;
-        const p = sphericalToCartesian(a[0] * toRad, a[1] * toRad, a[2]);
-        const q = cartesianToSpherical(p.x * sx, p.y * sy, p.z * sz);
-        return {
-            command: norm.command,
-            sourceIndex: norm.sourceIndex,
-            args: [q.az / toRad, q.el / toRad, q.r].concat(a.slice(3))
-        };
-    }
-    }
-    // clr, alg and anything forwarded verbatim carry no position.
-    return norm;
-}
-
-// ----- Input parsing: /spat/serv ---------------------------------------- //
-const HALF_PI = Math.PI / 2.;
-function parseSpatGRISInput(value) {
-    if (!value || value.length < 2) return null;
-
-    if (typeof value[0] === "number") {
-        // Legacy format: [sourceIndex, az, el, hspan, vspan, radius, reserved]
-        // Polar in radians; rewrite to canonical "pol" shape.
-        if (value.length < 7) return null;
-        // Keep the original payload: SpatGRIS routes the legacy form through a
-        // *cylindrical* LegacyLbapPosition::toPosition() in Cube/MBAP mode, but
-        // routes "pol" through a *spherical* conversion. Rewriting legacy to
-        // "pol" therefore moves the source (az=0, colat=pi/4, dist=1 lands at
-        // (0,0.707,0.707) instead of (0,1,0.5)). Outputs that speak /spat/serv
-        // natively re-emit `legacyArgs` unchanged; every other output uses the
-        // normalized "pol" form below, which is correct for them.
-        return {
-            command: "pol",
-            sourceIndex: 1+value[0],
-            args: [value[1], HALF_PI - value[2], value[5], value[3] / 2., value[4] * 2.],
-            legacyArgs: value.slice(1)
-        };
-    }
-    return {
-        command: value[0],
-        sourceIndex: (typeof value[1] === "number") ? value[1] : -1,
-        args: value.slice(2)
-    };
-}
-
-// ----- Input parsing: /adm/obj/{n}/… ------------------------------------ //
-// ADM sends per-parameter messages, not atomic packets, so we maintain
-// per-source state and emit a complete SpatGRIS-form command on every
-// incoming update. The last coordinate family written (polar vs cartesian)
-// determines whether we emit a "deg" or "car" command downstream.
-//
-// The accumulator belongs to the input device: two ADM senders each address
-// their own source 1.
-function getAdmSource(inp, n) {
-    if (!inp.admState)
-        inp.admState = {};
-    if (!inp.admState[n]) {
-        // Defaults per ADM-OSC spec:
-        //   azim, elev: (unspecified) → 0
-        //   dist      : 1.0 (on reference sphere)
-        //   xyz       : 0
-        //   w         : 0
-        inp.admState[n] = {
-            azim: 0, elev: 0, dist: 1.0,
-            x: 0, y: 0, z: 0,
-            w: 0,
-            lastMode: "car"
-        };
-    }
-    return inp.admState[n];
-}
-
-function parseADMInput(inp, address, value) {
-    // Match /adm/obj/<n>/<param> exactly (no wildcards).
-    const m = address.match(/^\/adm\/obj\/(\d+)\/(\w+)$/);
-    if (!m) return null;
-
-    const n = parseInt(m[1]);
-    const param = m[2];
-    const s = getAdmSource(inp, n);
-
-    if (!value) return null;
-
-    switch (param) {
-    case "aed":
-        if (value.length < 3) return null;
-        s.azim = value[0]; s.elev = value[1]; s.dist = value[2];
-        s.lastMode = "pol";
-        break;
-    case "azim":
-        if (value.length < 1) return null;
-        s.azim = value[0]; s.lastMode = "pol";
-        break;
-    case "elev":
-        if (value.length < 1) return null;
-        s.elev = value[0]; s.lastMode = "pol";
-        break;
-    case "dist":
-        if (value.length < 1) return null;
-        s.dist = value[0]; s.lastMode = "pol";
-        break;
-    case "xyz":
-        if (value.length < 3) return null;
-        s.x = value[0]; s.y = value[1]; s.z = value[2];
-        s.lastMode = "car";
-        break;
-    case "xy":
-        if (value.length < 2) return null;
-        s.x = value[0]; s.y = value[1];
-        s.lastMode = "car";
-        break;
-    case "x":
-        if (value.length < 1) return null;
-        s.x = value[0]; s.lastMode = "car";
-        break;
-    case "y":
-        if (value.length < 1) return null;
-        s.y = value[0]; s.lastMode = "car";
-        break;
-    case "z":
-        if (value.length < 1) return null;
-        s.z = value[0]; s.lastMode = "car";
-        break;
-    case "w":
-        if (value.length < 1) return null;
-        s.w = value[0];
-        // Width alone doesn't switch coordinate mode; re-emit with current mode.
-        break;
-    default:
-        // gain/mute/name/dref/dmax — no equivalent in our internal model.
-        return null;
-    }
-
-    // Emit in SpatGRIS-convention internal form.
-    // Axes match (x=L/R, y=B/F, z=D/U with same sign), so xyz passes through.
-    // ADM azimuth: +90° = left. SpatGRIS azimuth: -90° = left. → sign flip.
-    // ADM has no vertical extent → vspan = 0.
-    if (s.lastMode === "pol") {
-        return {
-            command: "deg",
-            sourceIndex: n,
-            args: [-s.azim, s.elev, s.dist, s.w, 0]
-        };
-    } else {
-        return {
-            command: "car",
-            sourceIndex: n,
-            args: [s.x, s.y, s.z, s.w, 0]
-        };
-    }
-}
-
-// ----- Input parsing: /source/{n}/… (SPAT Revolution) ------------------- //
-// The mirror of mapForSPAT: azimuth keeps the SpatGRIS sign, radius arrives as
-// a percentage, spread is one figure filling both extents. One parameter per
-// message, so the accumulator lives on the input device.
-function getSpatSource(inp, n) {
-    if (!inp.spatState)
-        inp.spatState = {};
-    if (!inp.spatState[n]) {
-        inp.spatState[n] = {
-            azim: 0, elev: 0, dist: 1.0,
-            x: 0, y: 0, z: 0,
-            spread: 0,
-            lastMode: "car"
-        };
-    }
-    return inp.spatState[n];
-}
-
-function parseSPATInput(inp, address, value) {
-    const m = address.match(/^\/source\/(\d+)\/(\w+)$/);
-    if (!m) return null;
-
-    const n = parseInt(m[1]);
-    const param = m[2];
-    const s = getSpatSource(inp, n);
-
-    if (!value) return null;
-
-    switch (param) {
-    case "aed":
-        if (value.length < 3) return null;
-        s.azim = value[0]; s.elev = value[1]; s.dist = value[2] / 100.0;
-        s.lastMode = "pol";
-        break;
-    case "xyz":
-        if (value.length < 3) return null;
-        s.x = value[0]; s.y = value[1]; s.z = value[2];
-        s.lastMode = "car";
-        break;
-    case "spread":
-        if (value.length < 1) return null;
-        // One figure on the wire, both extents internally.
-        s.spread = value[0] / 100.0;
-        // Spread alone doesn't switch coordinate mode.
-        break;
-    default:
-        // mode/gain/mute and the rest have no equivalent in our model.
-        return null;
-    }
-
-    if (s.lastMode === "pol") {
-        return {
-            command: "deg",
-            sourceIndex: n,
-            args: [s.azim, s.elev, s.dist, s.spread, s.spread]
-        };
-    }
-    return {
-        command: "car",
-        sourceIndex: n,
-        args: [s.x, s.y, s.z, s.spread, s.spread]
-    };
-}
-
-function mapMessage(command, idx, args, outputType, norm) {
-    switch (outputType) {
-    case "SpatGRIS":       return mapForSpatGRIS(command, idx, args, norm);
-    case "ADM-OSC":        return mapForADM(command, idx, args);
-    case "SPAT Revolution": return mapForSPAT(command, idx, args);
-    }
-    return [];
-}
-
-// ----- SpatGRIS: pass /spat/serv through verbatim ------------------------ //
-// The SpatGRIS server speaks /spat/serv natively, so we re-emit the
-// command with the exact coordinate system we received. No lossy
-// polar<->cartesian round-trip.
-function mapForSpatGRIS(command, idx, args, norm) {
-    // A legacy-form input goes back out in the legacy form, untouched.
-    // idx is 1-based (+ any per-route offset); the legacy wire form is 0-based.
-    if (norm && norm.legacyArgs) {
-        return [{
-            address: "/spat/serv",
-            value: [idx - 1].concat(norm.legacyArgs)
-        }];
-    }
-    switch (command) {
-    case "pol":
-    case "deg":
-    case "car":
-        if (args.length < 5) return [];
-        return [{
-            address: "/spat/serv",
-            value: [command, idx, args[0], args[1], args[2], args[3], args[4]]
-        }];
-    case "clr":
-        return [{ address: "/spat/serv", value: ["clr", idx] }];
-    case "alg":
-        if (args.length < 1) return [];
-        // alg idx <dome|cube>
-        return [{ address: "/spat/serv", value: ["alg", idx, args[0]] }];
-    }
-    // SpatGRIS speaks /spat/serv natively and supports commands we do not
-    // model (e.g. "reset <id>", sg_OscInput.cpp:186-193). Forward anything we did
-    // not recognise rather than dropping it on the floor.
-    if (typeof command === "string" && command.length > 0) {
-        return [{ address: "/spat/serv", value: [command, idx].concat(args) }];
-    }
-    return [];
-}
-
-// ----- ADM-OSC (v1.0) --------------------------------------------------- //
-// Conventions:
-//   - Azimuth: SpatGRIS uses −90° = left / +90° = right (example in spec:
-//     "deg 7 -90.0 ... moves source #7 at the extreme left").
-//     ADM uses +90° = left / −90° = right. → sign flipped.
-//   - Elevation: both use 0° = horizon, +90° = above. → no change.
-//   - Cartesian axes match: x = L/R, y = B/F, z = D/U with same signs.
-// Ranges differ: SpatGRIS cartesian is the MBAP extended field
-// (±MBAP_EXTENDED_RADIUS = ±1.6666667, sg_constants.hpp:71) while ADM-OSC
-// cartesian is normalized ±1. Relying on the receiver to clamp (ADM-OSC §9)
-// is NOT position-preserving: every source beyond 60% of full-scale collapses
-// onto the wall, silently discarding the outer 40% of the field. We therefore
-// scale the axes into ADM's normalized range. Polar radius is left alone: it
-// is a distance, not a bounded axis, and ControlGris dome sources sit at ~1.
-// ADM has no vertical-extent address — vspan is dropped.
-// Packed /aed and /xyz are used per the spec's atomicity recommendation.
-function mapForADM(command, idx, args) {
-    switch (command) {
-    case "pol":
-        if (args.length < 5) return [];
-        return polarToADM(idx, args[0], args[1], args[2], args[3]);
-    case "deg":
-        if (args.length < 5) return [];
-        return polarToADM(idx,
-                          args[0] * Math.PI / 180.0,
-                          args[1] * Math.PI / 180.0,
-                          args[2], args[3]);
-    case "car":
-        if (args.length < 5) return [];
-        return cartesianToADM(idx, args[0], args[1], args[2], args[3]);
-    case "clr":
-        // Packed xyz for atomic reset.
-        return [{ address: `/adm/obj/${idx}/xyz`, value: [0, 0, 0] }];
-    case "alg":
-        // ADM has no algorithm concept.
-        return [];
-    }
-    return [];
-}
-
-function polarToADM(idx, azimuthRad, elevationRad, radius, hspan) {
-    const messages = [{
-        address: `/adm/obj/${idx}/aed`,
-        value: [
-            -azimuthRad   * 180.0 / Math.PI,  // SpatGRIS → ADM azimuth sign flip
-             elevationRad * 180.0 / Math.PI,
-             radius
-        ]
-    }];
-    if (hspan !== undefined) {
-        // ADM /w is normalized [0, 1]; SpatGRIS hspan is already [0, 1].
-        messages.push({ address: `/adm/obj/${idx}/w`, value: hspan });
-    }
-    return messages;
-}
-
-// SpatGRIS MBAP_EXTENDED_RADIUS (sg_constants.hpp:71) -- the cartesian clamp
-// applied by CartesianVector::clampedToFarField (sg_CartesianVector.hpp:182-187).
-const MBAP_EXTENDED_RADIUS = 1.6666667;
-
-function cartesianToADM(idx, x, y, z, hspan) {
-    const messages = [{
-        address: `/adm/obj/${idx}/xyz`,
-        value: [x / MBAP_EXTENDED_RADIUS,
-                y / MBAP_EXTENDED_RADIUS,
-                z / MBAP_EXTENDED_RADIUS]
-    }];
-    if (hspan !== undefined) {
-        messages.push({ address: `/adm/obj/${idx}/w`, value: hspan });
-    }
-    return messages;
-}
-
-// ----- SPAT Revolution: /source/N/aed or /source/N/xyz ------------------- //
-function mapForSPAT(command, idx, args) {
-    switch (command) {
-    case "pol":
-        if (args.length < 5) return [];
-        return polarToSPAT(idx, args[0], args[1], args[2], args[3], args[4]);
-    case "deg":
-        if (args.length < 5) return [];
-        return polarToSPAT(idx,
-                           args[0] * Math.PI / 180.0,
-                           args[1] * Math.PI / 180.0,
-                           args[2], args[3], args[4]);
-    case "car":
-        if (args.length < 5) return [];
-        return cartesianToSPAT(idx, args[0], args[1], args[2], args[3], args[4]);
-    case "clr":
-        return [{ address: `/source/${idx}/xyz`, value: [0, 0, 0] }];
-    case "alg":
-        if (args.length < 1) return [];
-        return [{
-            address: `/source/${idx}/mode`,
-            value: args[0] === "dome" ? "dome" : "panning"
-        }];
-    }
-    return [];
-}
-
-function polarToSPAT(idx, azimuthRad, elevationRad, radius, hspan, vspan) {
-    const messages = [{
-        address: `/source/${idx}/aed`,
-        value: [
-            azimuthRad   * 180.0 / Math.PI,
-            elevationRad * 180.0 / Math.PI,
-            radius * 100  // SPAT uses percentage (0-100)
-        ]
-    }];
-    if (hspan !== undefined && vspan !== undefined) {
-        messages.push({
-            address: `/source/${idx}/spread`,
-            value: (hspan + vspan) / 2 * 100
-        });
-    }
-    return messages;
-}
-
-function cartesianToSPAT(idx, x, y, z, hspan, vspan) {
-    const messages = [{
-        address: `/source/${idx}/xyz`,
-        value: [x, y, z]
-    }];
-    if (hspan !== undefined && vspan !== undefined) {
-        messages.push({
-            address: `/source/${idx}/spread`,
-            value: (hspan + vspan) / 2 * 100
-        });
-    }
-    return messages;
 }
 
 // ----- Input device lifecycle ------------------------------------------- //
@@ -688,10 +581,11 @@ function createInput(name, port, protocol) {
         enabled: true,     // what the user asked for; persisted
         listening: false,  // what the socket managed; runtime only
         scaleX: 1, scaleY: 1, scaleZ: 1,
+        params: {},
         error: "",
         udp: null,
         osc: null,
-        admState: {}
+        rt: null
     };
     inputs.push(inp);
     openInput(inp);
@@ -703,6 +597,7 @@ function removeInput(id) {
     for (let i = 0; i < inputs.length; i++) {
         if (inputs[i].id !== id) continue;
         closeInput(inputs[i]);
+        detachInput(inputs[i]);
         inputs.splice(i, 1);
         // Routes referencing it would keep resolving.
         routes = routes.filter(function (r) { return r.inputId !== id; });
@@ -717,12 +612,17 @@ function updateInput(id, props) {
     const inp = findInput(id);
     if (!inp) return;
 
-    if (props.name !== undefined) inp.name = props.name;
+    if (props.name !== undefined) {
+        inp.name = props.name;
+        if (inp.rt)
+            for (let d of inp.rt.decoders) d.ctx.device.name = inp.name;
+    }
     if (props.protocol !== undefined && props.protocol !== inp.protocol) {
         inp.protocol = props.protocol;
-        // The accumulated coordinates describe the previous reading.
-        inp.admState = {};
-        inp.spatState = {};
+        // The accumulated coordinates describe the previous reading, and the
+        // params belong to the previous handler.
+        inp.params = {};
+        detachInput(inp);
     }
     for (let axis of ["scaleX", "scaleY", "scaleZ"]) {
         if (props[axis] === undefined) continue;
@@ -771,9 +671,8 @@ function setInputListening(id, listening) {
 }
 
 // ----- Output device lifecycle ------------------------------------------ //
-// Each output device is backed by a raw outbound UDP socket.
-// We format OSC entirely in JS (mapForXxx above) and hand the
-// result to udp.osc(addr, values).
+// Each output device is backed by a raw outbound UDP socket. Its handler
+// formats OSC in JS and sends through udp.osc(addr, values).
 function openOutputSocket(dev) {
     if (dev.udp) {
         try { dev.udp.close(); } catch (e) {}
@@ -799,7 +698,9 @@ function createOutput(name, host, port, protocol) {
         host: host,
         port: port,
         protocol: protocol,
-        udp: null
+        params: {},
+        udp: null,
+        rt: null
     };
     openOutputSocket(dev);
     outputs.push(dev);
@@ -807,14 +708,23 @@ function createOutput(name, host, port, protocol) {
     return dev;
 }
 
-// Host and port changes reopen the socket; the rest are labels.
+// Host and port changes reopen the socket; a protocol change rebuilds the
+// handler; the rest are labels.
 function updateOutput(id, props) {
     const out = findOutput(id);
     if (!out) return;
 
     let rebind = false;
-    if (props.name !== undefined) out.name = props.name;
-    if (props.protocol !== undefined) out.protocol = props.protocol;
+    if (props.name !== undefined) {
+        out.name = props.name;
+        if (out.rt && out.rt.ctx) out.rt.ctx.device.name = out.name;
+    }
+    if (props.protocol !== undefined && props.protocol !== out.protocol) {
+        out.protocol = props.protocol;
+        out.params = {};
+        detachOutput(out);
+        reindexRoutes();
+    }
     if (props.host !== undefined && props.host !== out.host) {
         out.host = props.host;
         rebind = true;
@@ -840,6 +750,7 @@ function removeOutput(id) {
             try { dev.udp.close(); } catch (e) {}
             dev.udp = null;
         }
+        detachOutput(dev);
         outputs.splice(i, 1);
         routes = routes.filter(function (r) { return r.outputId !== id; });
         reindexRoutes();
@@ -893,6 +804,46 @@ function updateMatrixList() {
     syncModel(matrixModel, rows, ["inputId", "outputId"]);
 }
 
+// ----- Protocol menus ---------------------------------------------------- //
+
+function protocolName(id) {
+    if (id === "Auto") return "Auto";
+    const h = Handlers.get(id);
+    return h === null ? id + " (not loaded)" : h.name;
+}
+
+// Parallel id and name lists for a protocol picker. A protocol some device
+// uses but no script provides any more stays listed, so the picker can show it.
+function protocolOptions(kind) {
+    const ids = [];
+    const names = [];
+    if (kind === "input") { ids.push("Auto"); names.push("Auto"); }
+    for (let h of Handlers.all()) {
+        if (kind === "input" ? !h.hasInput : !h.hasOutput) continue;
+        ids.push(h.id);
+        names.push(h.name);
+    }
+    for (let d of (kind === "input" ? inputs : outputs)) {
+        if (ids.indexOf(d.protocol) >= 0) continue;
+        ids.push(d.protocol);
+        names.push(protocolName(d.protocol));
+    }
+    return { ids: ids, names: names };
+}
+
+// [{ id, name }] of the protocols an output can be added with.
+function outputChoices(builtin) {
+    const list = [];
+    for (let h of Handlers.all())
+        if (h.hasOutput && h.builtin === builtin) list.push({ id: h.id, name: h.name });
+    return list;
+}
+
+function defaultPortFor(protocol) {
+    const h = Handlers.get(protocol);
+    return h === null ? 8000 : h.defaultPort;
+}
+
 // ----- List models ------------------------------------------------------- //
 // The engine keeps plain JS arrays; the views bind to these.
 
@@ -935,7 +886,9 @@ function updateInputList() {
             port: inp.port,
             enabled: inp.enabled !== false,
             listening: inp.listening,
-            error: inp.error,
+            // A socket problem first: without it nothing arrives at all.
+            error: inp.error ? inp.error : handlerStatus(inp, "input"),
+            hasParams: hasParams(inp),
             scaleX: scaleOf(inp, "scaleX"),
             scaleY: scaleOf(inp, "scaleY"),
             scaleZ: scaleOf(inp, "scaleZ")
@@ -957,7 +910,10 @@ function updateOutputList() {
             name: out.name,
             host: out.host,
             port: out.port,
-            protocol: out.protocol
+            protocol: out.protocol,
+            protocolName: protocolName(out.protocol),
+            error: handlerStatus(out, "output"),
+            hasParams: hasParams(out)
         });
     }
     syncModel(outputListModel, rows, ["outputId"]);
@@ -975,6 +931,8 @@ function updateRouteList(inputId) {
             host: out.host,
             port: out.port,
             protocol: out.protocol,
+            error: handlerStatus(out, "output"),
+            hasParams: hasParams(out),
             routed: r ? r.enabled : false,
             sourceOffset: r ? (r.sourceOffset || 0) : 0,
             srcMin: (r && r.srcMin !== null && r.srcMin !== undefined) ? r.srcMin : -1,
@@ -982,6 +940,280 @@ function updateRouteList(inputId) {
         });
     }
     syncModel(routeListModel, rows, ["outputId"]);
+}
+
+// ----- Handler scripts --------------------------------------------------- //
+// Two kinds, both listed by URL in appSettings.handlerScripts:
+//   - files ("file:///…"), read and written with XMLHttpRequest, which needs
+//     QML_XHR_ALLOW_FILE_READ=1 and QML_XHR_ALLOW_FILE_WRITE=1 (`environment`);
+//   - inline scripts ("inline:<name>"), written in the app's editor, whose
+//     source is kept in appSettings.inlineScripts. These need no file access,
+//     so they also work where there is none (wasm).
+// Loading is asynchronous for files: a device on a protocol that is not loaded
+// yet keeps its settings and picks the handler up when it arrives.
+
+var INLINE = "inline:";
+
+function isInline(url) {
+    return url.startsWith(INLINE);
+}
+
+function savedScriptUrls() {
+    if (appSettings.handlerScripts === undefined) return [];
+    try {
+        const list = JSON.parse(appSettings.handlerScripts || "[]");
+        return Array.isArray(list) ? list.filter(function (u) { return typeof u === "string"; }) : [];
+    } catch (e) {
+        console.log("Could not parse the saved handler scripts:", e);
+        return [];
+    }
+}
+
+function saveScriptUrls() {
+    if (appSettings.handlerScripts === undefined) return;
+    appSettings.handlerScripts = JSON.stringify(Handlers.scripts().map(function (s) { return s.url; }));
+}
+
+// url -> source, for inline scripts.
+function inlineSources() {
+    if (appSettings.inlineScripts === undefined) return {};
+    try {
+        const m = JSON.parse(appSettings.inlineScripts || "{}");
+        return (m && typeof m === "object" && !Array.isArray(m)) ? m : {};
+    } catch (e) {
+        console.log("Could not parse the saved inline scripts:", e);
+        return {};
+    }
+}
+
+function saveInlineSource(url, source) {
+    if (appSettings.inlineScripts === undefined) return;
+    const m = inlineSources();
+    if (source === null) delete m[url];
+    else m[url] = source;
+    appSettings.inlineScripts = JSON.stringify(m);
+}
+
+function loadSavedScripts() {
+    const inline = inlineSources();
+    for (let url of savedScriptUrls()) {
+        if (isInline(url))
+            registerSource(url, inline.hasOwnProperty(url) ? inline[url] : "",
+                           inline.hasOwnProperty(url) ? "" : "The script's source is missing");
+        else
+            readScript(url);
+    }
+}
+
+function scriptRecord(url) {
+    for (let s of Handlers.scripts())
+        if (s.url === url) return s;
+    return null;
+}
+
+// Compiles `source` for `url` (or records `readError`), then brings the
+// devices and lists up to date. Returns the error, or "".
+function registerSource(url, source, readError) {
+    const before = scriptRecord(url);
+    const previousId = before ? before.id : "";
+
+    let err = readError;
+    if (err === "")
+        err = Handlers.loadScript(url, source);
+    else
+        Handlers.scriptFailed(url, err);
+    if (err !== "")
+        console.log("Handler script", url, "failed:", err);
+
+    const after = scriptRecord(url);
+    if (previousId !== "" && previousId !== (after ? after.id : ""))
+        handlersChanged(previousId);
+    if (after && after.id !== "")
+        handlersChanged(after.id);
+
+    updateHandlerList();
+    // The window's refresh() also rebuilds the protocol pickers.
+    if (typeof refresh === "function") {
+        refresh();
+    } else {
+        updateInputList();
+        updateOutputList();
+    }
+    return err;
+}
+
+// file:// requests that Qt does not allow (QML_XHR_ALLOW_FILE_READ/WRITE unset)
+// never complete; they only print a warning. Give up on them after this long.
+var FILE_TIMEOUT_MS = 2000;
+
+function after(ms, fn) {
+    const t = Qt.createQmlObject("import QtQml; Timer { repeat: false }", appSettings);
+    t.interval = ms;
+    t.triggered.connect(function () { t.destroy(); fn(); });
+    t.start();
+}
+
+// `done(text, error)`, exactly once.
+function fileRequest(method, url, body, done) {
+    let settled = false;
+    const finish = function (text, error) {
+        if (settled) return;
+        settled = true;
+        done(text, error);
+    };
+    let xhr;
+    try {
+        xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function () {
+            // Qt throws on `status` before the request is done.
+            if (xhr.readyState !== XMLHttpRequest.DONE) return;
+            // file:// reports status 0 on success.
+            if (xhr.status === 0 || xhr.status === 200) finish(xhr.responseText, "");
+            else finish("", "status " + xhr.status);
+        };
+        xhr.open(method, url);
+        xhr.send(body);
+    } catch (e) {
+        finish("", String(e));
+        return;
+    }
+    after(FILE_TIMEOUT_MS, function () {
+        if (settled) return;
+        // Before abort(): it fires DONE with status 0, which reads as success.
+        finish("", method === "PUT" ? "file writes are not allowed (QML_XHR_ALLOW_FILE_WRITE=1)"
+                                    : "file reads are not allowed (QML_XHR_ALLOW_FILE_READ=1)");
+        try { xhr.abort(); } catch (e) {}
+    });
+}
+
+// `done(source, error)`.
+function readSource(url, done) {
+    if (isInline(url)) {
+        const m = inlineSources();
+        done(m.hasOwnProperty(url) ? m[url] : "", m.hasOwnProperty(url) ? "" : "The script's source is missing");
+        return;
+    }
+    fileRequest("GET", url, null, function (text, error) {
+        if (error !== "") done("", "Could not read the file: " + error);
+        else if (text === "") done("", "Could not read the file: it is missing or empty");
+        else done(text, "");
+    });
+}
+
+// `done(error)`.
+function writeSource(url, source, done) {
+    if (isInline(url)) {
+        saveInlineSource(url, source);
+        done("");
+        return;
+    }
+    fileRequest("PUT", url, source, function (text, error) {
+        done(error === "" ? "" : "Could not write the file: " + error);
+    });
+}
+
+// `done(error)` runs once the script is registered or has failed.
+function readScript(url, done) {
+    readSource(url, function (source, readError) {
+        const err = registerSource(url, source, readError);
+        if (done) done(err);
+    });
+}
+
+function addScript(url, done) {
+    readScript(url, function (err) {
+        saveScriptUrls();
+        if (done) done(err);
+    });
+}
+
+// A new inline script from the template, with an id and name nothing uses.
+// Returns its URL.
+function newInlineScript() {
+    const inline = inlineSources();
+    let n = 1;
+    while (Handlers.get("script-" + n) !== null || inline.hasOwnProperty(INLINE + "script-" + n)
+           || scriptRecord(INLINE + "script-" + n) !== null)
+        n++;
+    const url = INLINE + "script-" + n;
+    const source = Template.make("script-" + n, "Script " + n);
+    saveInlineSource(url, source);
+    registerSource(url, source, "");
+    saveScriptUrls();
+    return url;
+}
+
+// Saves the source where the script lives, then compiles it. The source is
+// kept even when it does not compile, so no edit is lost; the handler that was
+// running keeps running. `done({ error, line, saved })`.
+function applyScript(url, source, done) {
+    writeSource(url, source, function (writeError) {
+        if (writeError !== "") {
+            if (done) done({ error: writeError, line: -1, saved: false, running: false });
+            return;
+        }
+        const err = registerSource(url, source, "");
+        if (scriptRecord(url) !== null && savedScriptUrls().indexOf(url) < 0)
+            saveScriptUrls();
+        const rec = scriptRecord(url);
+        if (done) done({ error: err, line: rec ? rec.line : -1, saved: true,
+                         // A failed apply leaves the previous version registered.
+                         running: !!rec && rec.id !== "" && Handlers.get(rec.id) !== null });
+    });
+}
+
+// What the scripts view calls a script: its handler's name once it has one.
+function scriptName(url) {
+    const rec = scriptRecord(url);
+    const h = (rec && rec.id !== "") ? Handlers.get(rec.id) : null;
+    return h ? h.name : fileName(url);
+}
+
+function reloadScripts() {
+    for (let s of Handlers.scripts().slice())
+        readScript(s.url);
+}
+
+function reloadScript(url) {
+    readScript(url);
+}
+
+function removeScript(url) {
+    const id = Handlers.removeScript(url);
+    if (id !== "") handlersChanged(id);
+    if (isInline(url)) saveInlineSource(url, null);
+    saveScriptUrls();
+    updateHandlerList();
+    updateInputList();
+    updateOutputList();
+}
+
+function updateHandlerList() {
+    if (typeof handlerListModel === "undefined") return;
+    const rows = [];
+    for (let h of Handlers.all()) {
+        if (!h.builtin) continue;
+        rows.push({ handlerId: h.id, name: h.name, url: "", builtin: true, inline: false,
+                    directions: directionsOf(h), error: "" });
+    }
+    for (let s of Handlers.scripts()) {
+        const h = s.id !== "" ? Handlers.get(s.id) : null;
+        rows.push({ handlerId: s.id, name: h ? h.name : fileName(s.url), url: s.url,
+                    builtin: false, inline: isInline(s.url),
+                    directions: h ? directionsOf(h) : "", error: s.error });
+    }
+    syncModel(handlerListModel, rows, ["url", "handlerId"]);
+}
+
+function directionsOf(h) {
+    if (h.hasInput && h.hasOutput) return "in / out";
+    return h.hasInput ? "in" : "out";
+}
+
+function fileName(url) {
+    if (isInline(url)) return url.substring(INLINE.length);
+    const i = url.lastIndexOf("/");
+    return i < 0 ? url : decodeURIComponent(url.substring(i + 1));
 }
 
 // ----- Persistence ------------------------------------------------------- //
@@ -994,11 +1226,13 @@ function saveConfiguration() {
                      port: i.port, enabled: i.enabled !== false,
                      scaleX: scaleOf(i, "scaleX"),
                      scaleY: scaleOf(i, "scaleY"),
-                     scaleZ: scaleOf(i, "scaleZ") };
+                     scaleZ: scaleOf(i, "scaleZ"),
+                     params: i.params || {} };
         }),
         outputs: outputs.map(function (o) {
             return { id: o.id, name: o.name, protocol: o.protocol,
-                     host: o.host, port: o.port };
+                     host: o.host, port: o.port,
+                     params: o.params || {} };
         }),
         routes: routes.map(function (r) {
             return { inputId: r.inputId, outputId: r.outputId, enabled: r.enabled,
@@ -1056,6 +1290,10 @@ function usableDevices(list) {
     return out;
 }
 
+function savedParams(p) {
+    return (p && typeof p === "object" && !Array.isArray(p)) ? p : {};
+}
+
 function restoreV2(cfg) {
     const savedInputs = usableDevices(cfg.inputs);
     const savedOutputs = usableDevices(cfg.outputs);
@@ -1072,18 +1310,23 @@ function restoreV2(cfg) {
             scaleX: (si.scaleX === undefined) ? 1 : si.scaleX,
             scaleY: (si.scaleY === undefined) ? 1 : si.scaleY,
             scaleZ: (si.scaleZ === undefined) ? 1 : si.scaleZ,
+            params: savedParams(si.params),
             listening: false, error: "",
-            udp: null, osc: null, admState: {}
+            udp: null, osc: null, rt: null
         };
         inputs.push(inp);
         if (inp.enabled)
             openInput(inp);
     }
 
+    // A protocol whose script is missing keeps its id and params, so the
+    // device comes back whole once the script does.
     for (let so of savedOutputs) {
         const dev = {
             id: so.id, name: so.name, host: so.host,
-            port: so.port, protocol: so.protocol, udp: null
+            port: so.port, protocol: so.protocol,
+            params: savedParams(so.params),
+            udp: null, rt: null
         };
         openOutputSocket(dev);
         outputs.push(dev);

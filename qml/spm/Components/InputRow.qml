@@ -14,7 +14,9 @@ Rectangle {
     property string protocol: "Auto"
     property bool listening: false
     property string error: ""
-    property var protocols: []
+    property var protocolIds: []
+    property var protocolNames: []
+    property bool hasParams: false
     property real scaleX: 1
     property real scaleY: 1
     property real scaleZ: 1
@@ -25,6 +27,7 @@ Rectangle {
     signal nameEdited(string value)
     signal portEdited(string value)
     signal protocolEdited(string value)
+    signal paramsEditRequested
     signal scaleEditRequested
     signal removeRequested
     signal selectRequested
@@ -91,11 +94,16 @@ Rectangle {
             onCommit: value => root.portEdited(value)
         }
 
-        CustomComboBox {
+        ProtocolCell {
             Layout.preferredWidth: Columns.protocol
-            model: root.protocols
-            currentIndex: Math.max(0, root.protocols.indexOf(root.protocol))
-            onActivated: root.protocolEdited(currentText)
+            protocol: root.protocol
+            protocolIds: root.protocolIds
+            protocolNames: root.protocolNames
+            hasParams: root.hasParams
+            // The address column already reports it.
+            error: ""
+            onProtocolEdited: id => root.protocolEdited(id)
+            onParamsEditRequested: root.paramsEditRequested()
         }
 
         RowButton {

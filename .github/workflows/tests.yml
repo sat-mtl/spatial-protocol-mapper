@@ -38,7 +38,9 @@ jobs:
         run: |
           RUNNER=/usr/lib/qt6/bin/qmltestrunner
           [ -x "$RUNNER" ] || RUNNER=$(command -v qmltestrunner)
-          QT_QPA_PLATFORM=offscreen "$RUNNER" -import qml -input tests/
+          # As the app's `environment` sets them: handler scripts are files.
+          QML_XHR_ALLOW_FILE_READ=1 QML_XHR_ALLOW_FILE_WRITE=1 \
+            QT_QPA_PLATFORM=offscreen "$RUNNER" -import qml -input tests/
 
       # Informational: qmllint cannot see the ossia/score runtime.
       - name: qmllint
